@@ -236,13 +236,18 @@ body {
     min-height: 90px;
     background-color: white;
     box-shadow: 0 0 10px rgba(55,99,170,.1);
-    border-radius: 2px;
+    border-radius: 3px;
     display: flex;
     justify-content: center;
     align-items: center;
     color: #5e5e5e;
     font-size: 10pt;
     line-height: 15pt;
+    cursor: pointer;
+}
+
+#toc:hover {
+    box-shadow: 0 0 16px rgba(55,99,170,.3);
 }
 
 #tag-list {
@@ -253,11 +258,16 @@ body {
     min-height: 90px;
     background-color: white;
     box-shadow: 0 0 10px rgba(55,99,170,.1);
-    border-radius: 2px;
+    border-radius: 3px;
     display: flex;
     justify-content: center;
     align-items: center;
     color: #5e5e5e;
     font-size: 10pt;
     line-height: 15pt;
+    cursor: pointer;
+}
+
+#tag-list:hover {
+    box-shadow: 0 0 16px rgba(55,99,170,.3);
 }
