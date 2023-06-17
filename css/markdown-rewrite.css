@@ -1,0 +1,39 @@
+.content-area {
+    word-break: keep-all !important;
+    word-wrap: normal !important;
+    margin-bottom: 40px !important;
+}
+
+.content-area p {
+    line-height: 20pt !important;
+    text-indent: 2em !important;
+}
+
+.content-area ul {
+    line-height: 20pt !important;
+    text-indent: 0 !important;
+}
+
+.content-area ul > li {
+    margin-left: 25px !important;
+}
+
+.content-area blockquote {
+    margin-left: 25px !important;
+}
+
+.content-area blockquote > p {
+    text-indent: 0 !important;
+}
+
+.content-area p > img {
+    display: block !important;
+    margin: 0 auto !important;
+    text-indent: 0 !important;
+    margin-top: 10px !important;
+    margin-bottom: 10px !important;
+    border-radius: 5px !important;
+    width: 90% !important;
+    height: 90% !important;
+    background-color: white !important;
+}
