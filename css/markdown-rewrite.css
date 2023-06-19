@@ -36,4 +36,26 @@
     width: 90% !important;
     height: 90% !important;
     background-color: white !important;
+} 
+
+.highlight ::-webkit-scrollbar {
+    height: 5px !important;
+}
+
+.highlight ::-webkit-scrollbar-track {
+    background-color: #D2D2D7 !important;
+    border-radius: 1px !important;
+}
+
+.highlight ::-webkit-scrollbar-thumb {
+    background-color: #1D1D1F !important;
+    border-radius: 1px !important;
+}
+
+.highlight * {
+    border-radius: 5px !important;
+}
+
+.highlight > div > table > tbody * {
+    border-radius: 0 !important;
 }

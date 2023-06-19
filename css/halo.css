@@ -1,27 +1,30 @@
 html {
     width: 100%;
     height: auto;
+    overflow-x: hidden !important;
     background-color: #F2F2F2;
 }
 
 body {
     width: 100%;
     height: auto;
+    overflow-x: hidden !important;
     font-family: -apple-system,BlinkMacSystemFont,HarmonyOS_Regular,Helvetica Neue,Helvetica,Arial,PingFang SC,Hiragino Sans GB,Microsoft YaHei,sans-serif;
 }
 
-::-webkit-scrollbar {
-    width: 5px;
+
+html ::-webkit-scrollbar {
+    width: 5px !important;
 }
 
-::-webkit-scrollbar-track {
-    background-color: #D2D2D7;
-    border-radius: 1px;
+html ::-webkit-scrollbar-track {
+    background-color: #D2D2D7 !important;
+    border-radius: 1px !important;
 }
 
-::-webkit-scrollbar-thumb {
-    background-color: #1D1D1F;
-    border-radius: 1px;
+html ::-webkit-scrollbar-thumb {
+    background-color: #1D1D1F !important;
+    border-radius: 1px !important;
 }
 
 #header {
@@ -30,12 +33,14 @@ body {
     max-height: 65px;
     height: 65px;
     background-color: white;
+    overflow-x: hidden !important;
     box-shadow: 0 8px 16px rgba(55,99,170,.1);
 }
 
 #footer {
     width: 100%;
     min-height: 200px;
+    overflow-x: hidden !important;
     background-color: white;
     box-shadow: 0 0 16px rgba(55,99,170,.1);
     display: flex;
@@ -52,6 +57,7 @@ body {
     padding-right: 20px;
     font-size: 10pt;
     line-height: 18pt;
+    overflow-x: hidden !important;
     color: #5e5e5e;
     flex: 1;
 }
