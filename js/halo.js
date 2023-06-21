@@ -28,30 +28,26 @@ function smartRedirect() {
         return
     }
 
-    geoip2.country((response) => {
-        if (!response.country.iso_code) {
-            return
+    let lang =  "en-US";
+    if (navigator.language) {
+        lang = navigator.language
+    } else {
+        if (navigator.userLanguage) {
+            lang = navigator.userLanguage
         }
+    }
 
-        const code = response.country.iso_code.toLowerCase();
-
-        if (code === "cn") {
-            if (!host.startsWith("bluemiaomiao.gitee.io")) {
-                const newHref = href.replace(origin, "https://bluemiaomiao.gitee.io")
-                window.location.replace(newHref)
-                console.info("您当前的区域位置为中国，Halo的跳转目的是为了加速访问。")
-            }
-        } else {
-            if (!host.startsWith("bluemiaomiao.github.io")) {
-                const newHref = href.replace(origin, "https://bluemiaomiao.github.io")
-                window.location.replace(newHref)
-                console.info("Your location is " + code + ", the purpose of Halo's jump is to accelerate access.")   
-            }
+    if (lang.startsWith("zh")) {
+        if (!host.startsWith("bluemiaomiao.gitee.io")) {
+            const newHref = href.replace(origin, "https://bluemiaomiao.gitee.io")
+            window.location.replace(newHref)
         }
-
-    }, (error) => {
-        console.error(error)
-    }, {})
+    } else {
+        if (!host.startsWith("bluemiaomiao.github.io")) {
+            const newHref = href.replace(origin, "https://bluemiaomiao.github.io")
+            window.location.replace(newHref)
+        }
+    }
 }
 
 function main() {
