@@ -12,7 +12,8 @@
 先放一句大话：此架构适用于任何规模的公司！
 现有集群的复用 分布式配置数据存储：由于笔者所在的公司全部使用 MongoDB，那么我们运维部门也考虑采用 MongoDB，毕竟有先前的经验积累，另外可以复用现有的 MongoDB 集群。 分布式协调：此外我们还复用了现有的分布式协调集群 ———— Zookeeper，不过这个运维平台从代码上兼容了 ZooKeeper 和 ETCD，通过配置文件的驱动字段可以修改。 分布式消息系统：业务部门使用了 Kafka 作为消息中间件，另外我们还使用了 ELK 作为在线日志系统供研发部门查询，所以消息集群仍旧是 Kafka。 运维业务元数据 运维平台从元数据管理和配置管理进行了设计，元数据包括端口、IP地址、服务等。运维同学可以新建一些元数据，然后对这些元数据进行操作。这就很简单了，无非就是对一些 Document 的增删改查，由于笔者之前在某游戏公司工作，这个想法参考了某游戏公司的实现。
 笔者是个喜欢创新的人，我们通过元数据实现了业务全景图，这样在可视化场景为运维人员提供业务拓扑、业务树、网络拓扑等组织管理形式，方便运维人员对整个业务系统运行状态和部署架构全局一览，清晰便捷。
-前后端分离 笔者和其他的小伙伴使用了 Vue.js、ECharts 和 Naive UI 构建了 CMDB 的前端，通过 json-rpc 向后端发送请求。</description></item><item><title>学习 Google cAdvisor 源码</title><link>/article/google-cadvisor/</link><pubDate>Thu, 08 Sep 2022 11:02:19 +0800</pubDate><guid>/article/google-cadvisor/</guid><description/></item><item><title>深入 Kafka</title><link>/article/deep-in-kafka/</link><pubDate>Sat, 02 Jul 2022 13:43:10 +0800</pubDate><guid>/article/deep-in-kafka/</guid><description>概念 Apache Kafka 是一个开源分布式事件流平台，被数千家公司用于高性能数据管道、流分析、数据集成和任务关键型应用程序。Apache Kafka 在制造业、银行、保险、电信等大数据分析与处理方面存在着巨大的用途，官网也说 &amp;ldquo;More than 80% of all Fortune 100 companies trust, and use Kafka.&amp;quot;。
+前后端分离 笔者和其他的小伙伴使用了 Vue.js、ECharts 和 Naive UI 构建了 CMDB 的前端，通过 json-rpc 向后端发送请求。
+我们通过</description></item><item><title>学习 Google cAdvisor 源码</title><link>/article/google-cadvisor/</link><pubDate>Thu, 08 Sep 2022 11:02:19 +0800</pubDate><guid>/article/google-cadvisor/</guid><description/></item><item><title>深入 Kafka</title><link>/article/deep-in-kafka/</link><pubDate>Sat, 02 Jul 2022 13:43:10 +0800</pubDate><guid>/article/deep-in-kafka/</guid><description>概念 Apache Kafka 是一个开源分布式事件流平台，被数千家公司用于高性能数据管道、流分析、数据集成和任务关键型应用程序。Apache Kafka 在制造业、银行、保险、电信等大数据分析与处理方面存在着巨大的用途，官网也说 &amp;ldquo;More than 80% of all Fortune 100 companies trust, and use Kafka.&amp;quot;。
 官方网站：https://kafka.apache.org
 笔者研发的 zTrader Framework 支持接入各种 MQ 中间件，其中 Kafka 也在支持的列表，用作交易日志、风控通知、实时消息、量化策略日志等。
 学习 Kafka 的重要性可见一斑。
