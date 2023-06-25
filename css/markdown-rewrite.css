@@ -1,61 +1,70 @@
-.content-area {
-    word-break: keep-all !important;
-    word-wrap: normal !important;
-    margin-bottom: 40px !important;
+@media only screen and (min-width: 200px) {
+    .content-area {
+        display: none;
+    }
 }
 
-.content-area p {
-    line-height: 20pt !important;
-    text-indent: 2em !important;
-}
-
-.content-area ul {
-    line-height: 20pt !important;
-    text-indent: 0 !important;
-}
-
-.content-area ul > li {
-    margin-left: 25px !important;
-}
-
-.content-area blockquote {
-    margin-left: 25px !important;
-}
-
-.content-area blockquote > p {
-    text-indent: 0 !important;
-}
-
-.content-area p > img {
-    display: block !important;
-    margin: 0 auto !important;
-    text-indent: 0 !important;
-    margin-top: 10px !important;
-    margin-bottom: 10px !important;
-    border-radius: 5px !important;
-    width: 90% !important;
-    height: 90% !important;
-    background-color: white !important;
-} 
-
-.highlight ::-webkit-scrollbar {
-    height: 5px !important;
-}
-
-.highlight ::-webkit-scrollbar-track {
-    background-color: #D2D2D7 !important;
-    border-radius: 1px !important;
-}
-
-.highlight ::-webkit-scrollbar-thumb {
-    background-color: #1D1D1F !important;
-    border-radius: 1px !important;
-}
-
-.highlight * {
-    border-radius: 5px !important;
-}
-
-.highlight > div > table > tbody * {
-    border-radius: 0 !important;
+@media only screen and (min-width: 820px) {
+    .content-area {
+        display: block;
+        word-break: keep-all !important;
+        word-wrap: normal !important;
+        margin-bottom: 40px !important;
+    }
+    
+    .content-area p {
+        line-height: 20pt !important;
+        text-indent: 2em !important;
+    }
+    
+    .content-area ul {
+        line-height: 20pt !important;
+        text-indent: 0 !important;
+    }
+    
+    .content-area ul > li {
+        margin-left: 25px !important;
+    }
+    
+    .content-area blockquote {
+        margin-left: 25px !important;
+    }
+    
+    .content-area blockquote > p {
+        text-indent: 0 !important;
+    }
+    
+    .content-area p > img {
+        display: block !important;
+        margin: 0 auto !important;
+        text-indent: 0 !important;
+        margin-top: 10px !important;
+        margin-bottom: 10px !important;
+        border-radius: 5px !important;
+        width: 90% !important;
+        height: 90% !important;
+        background-color: white !important;
+    } 
+    
+    .highlight ::-webkit-scrollbar {
+        height: 5px !important;
+    }
+    
+    .highlight ::-webkit-scrollbar-track {
+        background-color: #D2D2D7 !important;
+        border-radius: 1px !important;
+    }
+    
+    .highlight ::-webkit-scrollbar-thumb {
+        background-color: #1D1D1F !important;
+        border-radius: 1px !important;
+    }
+    
+    .highlight * {
+        border-radius: 5px !important;
+    }
+    
+    .highlight > div > table > tbody * {
+        border-radius: 0 !important;
+    }
 }
