@@ -49,13 +49,19 @@
     }
     
     .highlight ::-webkit-scrollbar-track {
-        background-color: #D2D2D7 !important;
-        border-radius: 1px !important;
+        background-color: #282a36 !important;
+        border-top-left-radius: 0 !important;
+        border-top-right-radius: 0 !important;
+        border-bottom-left-radius: 5px !important;
+        border-bottom-right-radius: 5px !important;
     }
     
     .highlight ::-webkit-scrollbar-thumb {
-        background-color: #1D1D1F !important;
-        border-radius: 1px !important;
+        background-color: #484b60 !important;
+        border-top-left-radius: 2px !important;
+        border-top-right-radius: 2px !important;
+        border-bottom-left-radius: 2px !important;
+        border-bottom-right-radius: 2px !important;
     }
     
     .highlight * {
@@ -64,6 +70,18 @@
     
     .highlight > div > table > tbody * {
         border-radius: 0 !important;
+    }
+
+    .highlight > div > table > tbody > tr {
+        border-top: 0 !important;
+    }
+
+    .highlight > div > table > tbody > tr > td:nth-child(2) {
+        background-color: #282a36 !important;
+    }
+
+    .highlight > div > table > tbody > tr > td:nth-child(1) > pre {
+        padding-right: 2px !important;
     }
 
     code {
