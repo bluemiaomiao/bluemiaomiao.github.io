@@ -1,1 +1,591 @@
-<!doctype html><html lang=zh><head><meta charset=utf-8><meta http-equiv=x-ua-compatible content="IE=edge"><meta name=viewport content="width=device-width,initial-scale=1"><title>Halo的主页 - 学习 kubeadm 源码</title><link rel=stylesheet href=https://cdn.jsdelivr.net/npm/normalize.css@8.0.1/normalize.min.css><link rel=stylesheet href=https://cdnjs.cloudflare.com/ajax/libs/animate.css/4.1.1/animate.min.css><link rel=preconnect href=https://fonts.googleapis.com><link rel=preconnect href=https://fonts.gstatic.com crossorigin><link href="https://fonts.googleapis.com/css2?family=Fira+Code:wght@500&display=swap" rel=stylesheet><link rel=stylesheet href=../../css/halo.css><link rel=stylesheet href=../../css/github-markdown.css><link rel=stylesheet href=../../css/github-markdown-light.css><link rel=stylesheet href=../../css/markdown-rewrite.css><link rel="shortcut icon" href=favicon.ico type=image/x-icon><link rel=apple-touch-icon sizes=180x180 href=../../apple-touch-icon.png><link rel=icon type=image/png sizes=32x32 href=../../favicon-32x32.png><link rel=icon type=image/png sizes=16x16 href=../../favicon-16x16.png><link rel=manifest href=../../site.webmanifest><link rel=mask-icon href=../../safari-pinned-tab.svg color=#5bbad5><meta name=msapplication-TileColor content="#ffffff"><meta name=theme-color content="#ffffff"><style>body{display:flex;flex-direction:column;align-items:center}a{color:#5e5e5e;text-decoration:none}</style></head><body><div id=mob-warning>当前内容暂不适配移动端。<br>请使用桌面端查看。</div><div id=top style=width:0;height:0></div><div class=top-button><a href=#top style=text-decoration:none>Top</a></div><div id=toc>目<br>录</div><div id=header><div style=width:100%;display:flex;align-items:center;height:100%><div class=disable-select style=display:flex;justify-content:flex-end;font-size:14pt;font-weight:700;color:#555><div style=margin-right:35px></div><div><a style=color:#555;text-decoration:none href=../../>&lt;Halo的主页/></a></div></div><div style=flex:1;display:flex;justify-content:flex-end;font-size:14pt;font-weight:700;color:#555><div style=margin-right:45px><a href=https://www.wecomz.com style=color:#555;text-decoration:none>WecomZ</a></div><div style=margin-right:45px><a href=../../article style=color:#555;text-decoration:none>文章</a></div><div style=margin-right:45px><a href=../../video style=color:#555;text-decoration:none>视频</a></div><div style=margin-right:45px><a href=../../about style=color:#555;text-decoration:none>关于</a></div><div style=margin-left:35px></div></div></div></div><div id=article-content><div class=content-header><div>《学习 kubeadm 源码》</div><div style=font-size:10pt;height:100%;display:flex;align-items:flex-end;padding-bottom:12pt;color:#5e5e5e;font-weight:lighter>在2022/02/15 19:45:08更新，大约共100字。</div></div><div class=content-desc><div style=font-size:50pt;font-weight:700;color:#eee;padding-right:15px>“</div><div style=line-height:50pt;color:#9b9b9b>[迁移中]通过研究 kubeadm 源代码学习如何构建命令行程序。</div><div style=font-size:50pt;font-weight:700;color:#eee;padding-left:15px>”</div></div><div class="content-area markdown-body"><h1 id=背景与问题>背景与问题</h1><p>Kubeadm是芬兰的一个高中生在2015年的夏季所开发的，它本人也是云原生的爱好者，在CNCF社区处于领导职位。在Kubeadm没有发布之前，Kubernetes社区面临的问题是部署困难，且没有统一的、官方的部署方式。</p><p>愿意尝试使用Kubernetes的人必须忍受繁琐的步骤并且需要弄清楚整个Kubernetes的架构细节，例如拷贝二进制、分发证书、设置命令行启动参数等。随后Kubernetes社区提供了一个安装脚本，叫做kube-up，但是依旧是用于测试的，很快开源社区便出现了使用Chef、Puppet、Ansible等自动化部署工具构建的部署方式。但是这些部署方式都不是完美的并且也不是官方所推荐的。</p><p>社区开始在外界寻找灵感，Docker Swarm的出现刺激了社区的开发人员，Kubeadm就这样诞生了。Kubernetes整个软件的设计是采用模块化的，高内聚低耦合，支持各种灵活的部署方式，确定Kubeadm的设计目标后，由Kubernetes SIG负责设计的Kubeadm开始并入Kubernetes源代码作为官方所推荐的生产环境下的部署工具。</p><p>使用Kubeadm并不需要深入了解Kubernetes的各种细节，但是通过本文深入探索Kubeadm的设计与实现，你可以还原整个Kubernetes集群部署所做的细节。</p><h1 id=搭建源代码分析环境>搭建源代码分析环境</h1><p>Kubernetes的源代码由于实现的缘故，目前有些地方仅支持类UNIX系统，我们所需的工具如下：</p><ul><li>Goland：JetBrains出品的Goland是主流的付费Golang IDE，具有强大的静态代码分析与推导能力，开源软件作者和教育工作者可以获得免费的许可。如果你不愿意为此付费，Mircosoft Visual Studio Code也是一个比较不错的编辑器，基于Electron开发，但是编辑器终究还是编辑器。</li><li>Vim：跨平台的文本编辑器，我们需要在Linux服务器上安装，以方便随时查看代码。</li><li>Go 1.17.x：Kubernetes版本与Golang的版本是绑定关系，本文采用Kubernetes 1.22.x版本，因此需要安装Go 1.17.x</li><li>Open SSH Server：我们Mac/Windows上的Kubernetes源代码编辑完成以后需要通过Goland内置的SFTP上传到Linux服务器。</li><li>Git：Kubernetes源代码使用分布式版本控制系统Git来管理。</li><li>Ubuntu 21.04：Linux发行版，你可以选择自己喜欢的Linux发行版。</li><li>GCC、G++环境：Kubernetes源代码中不仅Go代码，还有C/C++代码和汇编ASM代码，因此你需要为Linux服务器部署C/C++环境。如果你想在本地编译Kubernetes源代码，那么你需要安装Vistual Studio或者XCode。</li></ul><p>具体的方式如下图所示：</p><p><img src=../../article/kubernetes-kubeadm/640.png alt></p></div></div><footer id=footer><div class=footer-inner><div><div style=font-weight:700;margin-bottom:15px>发布地址</div><div><a href=https://halo.wecomz.com>Halo的主页</a></div><div><a href=https://bluemiaomiao.gitee.io>中国境内镜像</a></div><div><a href=https://bluemiaomiao.github.io>中国境外镜像</a></div></div><div><div style=font-weight:700;margin-bottom:15px>友情链接</div><div><a href=https://debuginn.cn>DebugInn</a></div><div><a href=https://blog.csdn.net/qq_43442524>普通Gopher</a></div></div><div><div style=font-weight:700;margin-bottom:15px>开源软件</div><div><a href=https://bluemiaomiao.github.io/libsshd/>OpenSSH Configuration Library</a></div><div><a href=https://bluemiaomiao.github.io/fastdfs-spring-boot-starter/>FastDFS SpringBoot Starter</a></div><div><a href=https://bluemiaomiao.github.io/librocm-smi-gobinding/>AMD ROCm SMI for Golang</a></div><div><a href=https://bluemiaomiao.github.io/libnvml-smi-gobinding>NVIDIA NVML SMI for Golang</a></div><div><a href=https://www.wecomz.com/software/zgraphics>zGraphics(Prometheus GPU Exporter)</a></div><div><a href=https://www.wecomz.com/software/ztrader>zTrader Framework</a></div></div><div><div style=font-weight:700;margin-bottom:15px>其他</div><div><a href=https://values.wecomz.com>WecomZ 价值观</a></div></div></div><div class=icp><div style=min-height:13px;min-width:13px;background-image:url(/image/beian.png);background-repeat:no-repeat;background-size:contain;margin-right:5px></div><div><a href=https://beian.miit.gov.cn target=_blank>鲁ICP备2023019133号</a></div></div></footer></body><script src=../../js/halo.js type=text/javascript></script></html>
+<!doctype html><html lang=zh><head><meta charset=utf-8><meta http-equiv=x-ua-compatible content="IE=edge"><meta name=viewport content="width=device-width,initial-scale=1"><title>Halo的主页 - 学习 kubeadm 源码</title><link rel=stylesheet href=https://cdn.jsdelivr.net/npm/normalize.css@8.0.1/normalize.min.css><link rel=stylesheet href=https://cdnjs.cloudflare.com/ajax/libs/animate.css/4.1.1/animate.min.css><link rel=preconnect href=https://fonts.googleapis.com><link rel=preconnect href=https://fonts.gstatic.com crossorigin><link href="https://fonts.googleapis.com/css2?family=Fira+Code:wght@500&display=swap" rel=stylesheet><link rel=stylesheet href=../../css/halo.css><link rel=stylesheet href=../../css/github-markdown.css><link rel=stylesheet href=../../css/github-markdown-light.css><link rel=stylesheet href=../../css/markdown-rewrite.css><link rel="shortcut icon" href=favicon.ico type=image/x-icon><link rel=apple-touch-icon sizes=180x180 href=../../apple-touch-icon.png><link rel=icon type=image/png sizes=32x32 href=../../favicon-32x32.png><link rel=icon type=image/png sizes=16x16 href=../../favicon-16x16.png><link rel=manifest href=../../site.webmanifest><link rel=mask-icon href=../../safari-pinned-tab.svg color=#5bbad5><meta name=msapplication-TileColor content="#ffffff"><meta name=theme-color content="#ffffff"><style>body{display:flex;flex-direction:column;align-items:center}a{color:#5e5e5e;text-decoration:none}</style></head><body><div id=mob-warning>当前内容暂不适配移动端。<br>请使用桌面端查看。</div><div id=top style=width:0;height:0></div><div class=top-button><a href=#top style=text-decoration:none>Top</a></div><div id=toc>目<br>录</div><div id=header><div style=width:100%;display:flex;align-items:center;height:100%><div class=disable-select style=display:flex;justify-content:flex-end;font-size:14pt;font-weight:700;color:#555><div style=margin-right:35px></div><div><a style=color:#555;text-decoration:none href=../../>&lt;Halo的主页/></a></div></div><div style=flex:1;display:flex;justify-content:flex-end;font-size:14pt;font-weight:700;color:#555><div style=margin-right:45px><a href=https://www.wecomz.com style=color:#555;text-decoration:none>WecomZ</a></div><div style=margin-right:45px><a href=../../article style=color:#555;text-decoration:none>文章</a></div><div style=margin-right:45px><a href=../../video style=color:#555;text-decoration:none>视频</a></div><div style=margin-right:45px><a href=../../about style=color:#555;text-decoration:none>关于</a></div><div style=margin-left:35px></div></div></div></div><div id=article-content><div class=content-header><div>《学习 kubeadm 源码》</div><div style=font-size:10pt;height:100%;display:flex;align-items:flex-end;padding-bottom:12pt;color:#5e5e5e;font-weight:lighter>在2022/02/15 19:45:08更新，大约共1300字。</div></div><div class=content-desc><div style=font-size:50pt;font-weight:700;color:#eee;padding-right:15px>“</div><div style=line-height:50pt;color:#9b9b9b>[迁移]通过研究 kubeadm 源代码学习如何构建命令行程序。</div><div style=font-size:50pt;font-weight:700;color:#eee;padding-left:15px>”</div></div><div class="content-area markdown-body"><h1 id=背景与问题>背景与问题</h1><p>Kubeadm是芬兰的一个高中生在2015年的夏季所开发的，它本人也是云原生的爱好者，在CNCF社区处于领导职位。在Kubeadm没有发布之前，Kubernetes社区面临的问题是部署困难，且没有统一的、官方的部署方式。</p><p>愿意尝试使用Kubernetes的人必须忍受繁琐的步骤并且需要弄清楚整个Kubernetes的架构细节，例如拷贝二进制、分发证书、设置命令行启动参数等。随后Kubernetes社区提供了一个安装脚本，叫做kube-up，但是依旧是用于测试的，很快开源社区便出现了使用Chef、Puppet、Ansible等自动化部署工具构建的部署方式。但是这些部署方式都不是完美的并且也不是官方所推荐的。</p><p>社区开始在外界寻找灵感，Docker Swarm的出现刺激了社区的开发人员，Kubeadm就这样诞生了。Kubernetes整个软件的设计是采用模块化的，高内聚低耦合，支持各种灵活的部署方式，确定Kubeadm的设计目标后，由Kubernetes SIG负责设计的Kubeadm开始并入Kubernetes源代码作为官方所推荐的生产环境下的部署工具。</p><p>使用Kubeadm并不需要深入了解Kubernetes的各种细节，但是通过本文深入探索Kubeadm的设计与实现，你可以还原整个Kubernetes集群部署所做的细节。</p><h1 id=搭建源代码分析环境>搭建源代码分析环境</h1><p>Kubernetes的源代码由于实现的缘故，目前有些地方仅支持类UNIX系统，我们所需的工具如下：</p><ul><li>Goland：JetBrains出品的Goland是主流的付费Golang IDE，具有强大的静态代码分析与推导能力，开源软件作者和教育工作者可以获得免费的许可。如果你不愿意为此付费，Mircosoft Visual Studio Code也是一个比较不错的编辑器，基于Electron开发，但是编辑器终究还是编辑器。</li><li>Vim：跨平台的文本编辑器，我们需要在Linux服务器上安装，以方便随时查看代码。</li><li>Go 1.17.x：Kubernetes版本与Golang的版本是绑定关系，本文采用Kubernetes 1.22.x版本，因此需要安装Go 1.17.x</li><li>Open SSH Server：我们Mac/Windows上的Kubernetes源代码编辑完成以后需要通过Goland内置的SFTP上传到Linux服务器。</li><li>Git：Kubernetes源代码使用分布式版本控制系统Git来管理。</li><li>Ubuntu 21.04：Linux发行版，你可以选择自己喜欢的Linux发行版。</li><li>GCC、G++环境：Kubernetes源代码中不仅Go代码，还有C/C++代码和汇编ASM代码，因此你需要为Linux服务器部署C/C++环境。如果你想在本地编译Kubernetes源代码，那么你需要安装Vistual Studio或者XCode。</li></ul><p>具体的方式如下图所示：</p><p><img src=../../article/kubernetes-kubeadm/640.png alt></p><p>在Linux发行版上执行如下命令部署基本的开发环境：</p><div class=highlight><div style=color:#e2e4e5;background-color:#282a36;-moz-tab-size:4;-o-tab-size:4;tab-size:4><table style=border-spacing:0;padding:0;margin:0;border:0><tr><td style=vertical-align:top;padding:0;margin:0;border:0><pre tabindex=0 style=color:#e2e4e5;background-color:#282a36;-moz-tab-size:4;-o-tab-size:4;tab-size:4><code><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">1
+</span></code></pre></td><td style=vertical-align:top;padding:0;margin:0;border:0;width:100%><pre tabindex=0 style=color:#e2e4e5;background-color:#282a36;-moz-tab-size:4;-o-tab-size:4;tab-size:4><code class=language-shell data-lang=shell><span style=display:flex><span>sudo apt install golang make build-ess* -y
+</span></span></code></pre></td></tr></table></div></div><p>然后克隆Kubernetes源代码存储库到本地：</p><div class=highlight><div style=color:#e2e4e5;background-color:#282a36;-moz-tab-size:4;-o-tab-size:4;tab-size:4><table style=border-spacing:0;padding:0;margin:0;border:0><tr><td style=vertical-align:top;padding:0;margin:0;border:0><pre tabindex=0 style=color:#e2e4e5;background-color:#282a36;-moz-tab-size:4;-o-tab-size:4;tab-size:4><code><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">1
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">2
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">3
+</span></code></pre></td><td style=vertical-align:top;padding:0;margin:0;border:0;width:100%><pre tabindex=0 style=color:#e2e4e5;background-color:#282a36;-moz-tab-size:4;-o-tab-size:4;tab-size:4><code class=language-shell data-lang=shell><span style=display:flex><span>mkdir <span style=color:#ff5c57>$GOPATH</span>/src/k8s.io <span style=color:#ff6ac1>&amp;&amp;</span> <span style=color:#ff5c57>cd</span> <span style=color:#ff5c57>$GOPATH</span>/src/k8s.io
+</span></span><span style=display:flex><span>git clone https://github.com/kubernetes/kubernetes.git kubernetes
+</span></span><span style=display:flex><span><span style=color:#ff5c57>cd</span> kubernetes
+</span></span></code></pre></td></tr></table></div></div><p>完成以后，使用Goland打开即可。Goland会分析代码构建索引，并且安装依赖，如果依赖安装失败，你需要手动安装Kubernetes所需的库：</p><div class=highlight><div style=color:#e2e4e5;background-color:#282a36;-moz-tab-size:4;-o-tab-size:4;tab-size:4><table style=border-spacing:0;padding:0;margin:0;border:0><tr><td style=vertical-align:top;padding:0;margin:0;border:0><pre tabindex=0 style=color:#e2e4e5;background-color:#282a36;-moz-tab-size:4;-o-tab-size:4;tab-size:4><code><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">1
+</span></code></pre></td><td style=vertical-align:top;padding:0;margin:0;border:0;width:100%><pre tabindex=0 style=color:#e2e4e5;background-color:#282a36;-moz-tab-size:4;-o-tab-size:4;tab-size:4><code class=language-shell data-lang=shell><span style=display:flex><span>go mod download
+</span></span></code></pre></td></tr></table></div></div><p>由于某些未知的原因，将Kubernetes存储库克隆到本地后可能会出现文件目录权限丢失问题，通过执行本文提供的脚本（仅类UNIX系统）实现修复：</p><div class=highlight><div style=color:#e2e4e5;background-color:#282a36;-moz-tab-size:4;-o-tab-size:4;tab-size:4><table style=border-spacing:0;padding:0;margin:0;border:0><tr><td style=vertical-align:top;padding:0;margin:0;border:0><pre tabindex=0 style=color:#e2e4e5;background-color:#282a36;-moz-tab-size:4;-o-tab-size:4;tab-size:4><code><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">1
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">2
+</span></code></pre></td><td style=vertical-align:top;padding:0;margin:0;border:0;width:100%><pre tabindex=0 style=color:#e2e4e5;background-color:#282a36;-moz-tab-size:4;-o-tab-size:4;tab-size:4><code class=language-shell data-lang=shell><span style=display:flex><span>chmod +x ./fix-limit.sh  <span style=color:#78787e># Git克隆后文件权限发生变化可能会导致编译失败</span>
+</span></span><span style=display:flex><span>./fix-limit.sh           <span style=color:#78787e># 执行脚本修复权限</span>
+</span></span></code></pre></td></tr></table></div></div><div class=highlight><div style=color:#e2e4e5;background-color:#282a36;-moz-tab-size:4;-o-tab-size:4;tab-size:4><table style=border-spacing:0;padding:0;margin:0;border:0><tr><td style=vertical-align:top;padding:0;margin:0;border:0><pre tabindex=0 style=color:#e2e4e5;background-color:#282a36;-moz-tab-size:4;-o-tab-size:4;tab-size:4><code><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 1
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 2
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 3
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 4
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 5
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 6
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 7
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 8
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 9
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">10
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">11
+</span></code></pre></td><td style=vertical-align:top;padding:0;margin:0;border:0;width:100%><pre tabindex=0 style=color:#e2e4e5;background-color:#282a36;-moz-tab-size:4;-o-tab-size:4;tab-size:4><code class=language-shell data-lang=shell><span style=display:flex><span><span style=color:#78787e>#!/usr/bin/env bash
+</span></span></span><span style=display:flex><span><span style=color:#78787e></span><span style=color:#78787e># filename: fix-limit.sh</span>
+</span></span><span style=display:flex><span><span style=color:#78787e># description: Fix the existing file permission problem.</span>
+</span></span><span style=display:flex><span>
+</span></span><span style=display:flex><span><span style=color:#ff5c57>echo</span> <span style=color:#5af78e>&#39;Starting...&#39;</span>
+</span></span><span style=display:flex><span>sudo find . -type d -exec chmod <span style=color:#ff9f43>755</span> <span style=color:#ff6ac1>{}</span> <span style=color:#5af78e>\;</span>
+</span></span><span style=display:flex><span>sudo find . -type d -name <span style=color:#5af78e>&#39;.*&#39;</span> -exec chmod <span style=color:#ff9f43>755</span> <span style=color:#ff6ac1>{}</span> <span style=color:#5af78e>\;</span>
+</span></span><span style=display:flex><span>sudo find . -type f -exec chmod <span style=color:#ff9f43>644</span> <span style=color:#ff6ac1>{}</span> <span style=color:#5af78e>\;</span>
+</span></span><span style=display:flex><span>sudo find . -type f -name <span style=color:#5af78e>&#34;*.sh&#34;</span> -exec chmod +x <span style=color:#ff6ac1>{}</span> <span style=color:#5af78e>\;</span>
+</span></span><span style=display:flex><span>sudo find . -type f -name <span style=color:#5af78e>&#39;.*&#39;</span> -exec chmod <span style=color:#ff9f43>644</span> <span style=color:#ff6ac1>{}</span> <span style=color:#5af78e>\;</span>
+</span></span><span style=display:flex><span><span style=color:#ff5c57>echo</span> <span style=color:#5af78e>&#39;Done&#39;</span>
+</span></span></code></pre></td></tr></table></div></div><h1 id=kubeadm-的执行架构与命令架构>Kubeadm 的执行架构与命令架构</h1><p>Kubeadm和Kubectl一样，都是使用Cobra这个库实现的，Cobra是构建具备现代应用程序风格的命令行工具库。最终的数据结构是cobra.Command，它包装了命令的名称和对应的函数。根据Go Project Layout规范，显然，Kubeadm的二进制命令源码文件位于：<code>$GOPATH/src/k8s.io/kubernetes/cmd/kubeadm/kubeadm.go</code>。在分析源代码之前，我们首先看看整个Kubeadm的架构设计。Kubeadm将任务分为多个阶段，叫做Phase，每个Phase本质上是一个执行流程，例如执行主机节点的内存检查。因此Phase是由任意个Check构成的，Check实现了Checker接口。Phase被添加到工作流Workflow中，由Workflow的Runner执行具体的逻辑，然后返回结果。每个Phase中的Check都会返回一个errors类型的错误对象，然后由Phase计算全部的Check有哪些没有通过，然后将错误信息写到标准输出和错误输出。</p><p>具体的执行架构如下图所示：</p><p><img src=../../article/kubernetes-kubeadm/641.png alt></p><p>介绍完Kubeadm的任务执行架构之后，我们再来介绍一下命令与子命令是如何构建的。上面提到过，kubeadm使用cobra构建的，cobra使用cobra.Command包装命令和子命令。通过AddCommand方法将一个cobra.Command结构挂载到另一个结构上。从整体上看，cobra.Command构成了树结构。如下图所示：</p><p><img src=../../article/kubernetes-kubeadm/642.png alt></p><p>接下来，我们将会深入分析kubeadm init、kubeadm join和kubeadm reset的实现。</p><h1 id=细说-kubeadm-init>细说 kubeadm init</h1><p>打开 <code>cmd/kubeadm/kubeadm.go</code> 文件，可以看到main函数：</p><div class=highlight><div style=color:#e2e4e5;background-color:#282a36;-moz-tab-size:4;-o-tab-size:4;tab-size:4><table style=border-spacing:0;padding:0;margin:0;border:0><tr><td style=vertical-align:top;padding:0;margin:0;border:0><pre tabindex=0 style=color:#e2e4e5;background-color:#282a36;-moz-tab-size:4;-o-tab-size:4;tab-size:4><code><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">1
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">2
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">3
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">4
+</span></code></pre></td><td style=vertical-align:top;padding:0;margin:0;border:0;width:100%><pre tabindex=0 style=color:#e2e4e5;background-color:#282a36;-moz-tab-size:4;-o-tab-size:4;tab-size:4><code class=language-go data-lang=go><span style=display:flex><span><span style=color:#ff5c57>func</span> <span style=color:#57c7ff>main</span>() {
+</span></span><span style=display:flex><span>  <span style=color:#ff6ac1>...</span>
+</span></span><span style=display:flex><span>  kubeadmutil.<span style=color:#57c7ff>CheckErr</span>(app.<span style=color:#57c7ff>Run</span>())
+</span></span><span style=display:flex><span>}
+</span></span></code></pre></td></tr></table></div></div><p>它调用了app.Run()函数，这个函数返回一个errors类型，然后由kubeadmutil.CheckErr将错误转换为人类友好的字符串打印到标准输出或者错误输出。
+在app.Run()函数位于 <code>cmd/kubeadm/app/kubeadm.go</code> 文件中，主要功能是返回一个cobra.Command结构，如下所示：</p><div class=highlight><div style=color:#e2e4e5;background-color:#282a36;-moz-tab-size:4;-o-tab-size:4;tab-size:4><table style=border-spacing:0;padding:0;margin:0;border:0><tr><td style=vertical-align:top;padding:0;margin:0;border:0><pre tabindex=0 style=color:#e2e4e5;background-color:#282a36;-moz-tab-size:4;-o-tab-size:4;tab-size:4><code><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">1
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">2
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">3
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">4
+</span></code></pre></td><td style=vertical-align:top;padding:0;margin:0;border:0;width:100%><pre tabindex=0 style=color:#e2e4e5;background-color:#282a36;-moz-tab-size:4;-o-tab-size:4;tab-size:4><code class=language-go data-lang=go><span style=display:flex><span><span style=color:#ff5c57>func</span> <span style=color:#57c7ff>Run</span>() <span style=color:#9aedfe>error</span> {
+</span></span><span style=display:flex><span>  <span style=color:#ff6ac1>...</span>
+</span></span><span style=display:flex><span>  <span style=color:#ff6ac1>return</span> cmd.<span style=color:#57c7ff>NewKubeadmCommand</span>(os.Stdin, os.Stdout, os.Stderr).<span style=color:#57c7ff>Execute</span>()
+</span></span><span style=display:flex><span>}
+</span></span></code></pre></td></tr></table></div></div><p>此函数主要功能是构建kubeadm的主命令然后为自己挂载子命令：</p><div class=highlight><div style=color:#e2e4e5;background-color:#282a36;-moz-tab-size:4;-o-tab-size:4;tab-size:4><table style=border-spacing:0;padding:0;margin:0;border:0><tr><td style=vertical-align:top;padding:0;margin:0;border:0><pre tabindex=0 style=color:#e2e4e5;background-color:#282a36;-moz-tab-size:4;-o-tab-size:4;tab-size:4><code><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 1
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 2
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 3
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 4
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 5
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 6
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 7
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 8
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 9
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">10
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">11
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">12
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">13
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">14
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">15
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">16
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">17
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">18
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">19
+</span></code></pre></td><td style=vertical-align:top;padding:0;margin:0;border:0;width:100%><pre tabindex=0 style=color:#e2e4e5;background-color:#282a36;-moz-tab-size:4;-o-tab-size:4;tab-size:4><code class=language-go data-lang=go><span style=display:flex><span>
+</span></span><span style=display:flex><span><span style=color:#ff5c57>func</span> <span style=color:#57c7ff>NewKubeadmCommand</span>(in io.Reader, out, err io.Writer) <span style=color:#ff6ac1>*</span>cobra.Command {
+</span></span><span style=display:flex><span>  <span style=color:#ff6ac1>...</span>
+</span></span><span style=display:flex><span>  cmds <span style=color:#ff6ac1>:=</span> <span style=color:#ff6ac1>&amp;</span>cobra.Command{}
+</span></span><span style=display:flex><span>  <span style=color:#ff6ac1>...</span>
+</span></span><span style=display:flex><span>  cmds.<span style=color:#57c7ff>AddCommand</span>(<span style=color:#57c7ff>newCmdCertsUtility</span>(out))
+</span></span><span style=display:flex><span>  cmds.<span style=color:#57c7ff>AddCommand</span>(<span style=color:#57c7ff>newCmdCompletion</span>(out, <span style=color:#5af78e>&#34;&#34;</span>))
+</span></span><span style=display:flex><span>  cmds.<span style=color:#57c7ff>AddCommand</span>(<span style=color:#57c7ff>newCmdConfig</span>(out))
+</span></span><span style=display:flex><span>  cmds.<span style=color:#57c7ff>AddCommand</span>(<span style=color:#57c7ff>newCmdInit</span>(out, <span style=color:#ff6ac1>nil</span>))
+</span></span><span style=display:flex><span>  cmds.<span style=color:#57c7ff>AddCommand</span>(<span style=color:#57c7ff>newCmdJoin</span>(out, <span style=color:#ff6ac1>nil</span>))
+</span></span><span style=display:flex><span>  cmds.<span style=color:#57c7ff>AddCommand</span>(<span style=color:#57c7ff>newCmdReset</span>(in, out, <span style=color:#ff6ac1>nil</span>))
+</span></span><span style=display:flex><span>  cmds.<span style=color:#57c7ff>AddCommand</span>(<span style=color:#57c7ff>newCmdVersion</span>(out))
+</span></span><span style=display:flex><span>  cmds.<span style=color:#57c7ff>AddCommand</span>(<span style=color:#57c7ff>newCmdToken</span>(out, err))
+</span></span><span style=display:flex><span>  cmds.<span style=color:#57c7ff>AddCommand</span>(upgrade.<span style=color:#57c7ff>NewCmdUpgrade</span>(out))
+</span></span><span style=display:flex><span>  cmds.<span style=color:#57c7ff>AddCommand</span>(alpha.<span style=color:#57c7ff>NewCmdAlpha</span>())
+</span></span><span style=display:flex><span>  cmds.<span style=color:#57c7ff>AddCommand</span>(<span style=color:#57c7ff>newCmdKubeConfigUtility</span>(out))
+</span></span><span style=display:flex><span>  <span style=color:#ff6ac1>...</span>
+</span></span><span style=display:flex><span>  <span style=color:#ff6ac1>return</span> cmds
+</span></span><span style=display:flex><span>}
+</span></span></code></pre></td></tr></table></div></div><p>接下来我们看看newCmdInit()函数，它位于<code>cmd/kubeadm/app/cmd/init.go</code>中:</p><div class=highlight><div style=color:#e2e4e5;background-color:#282a36;-moz-tab-size:4;-o-tab-size:4;tab-size:4><table style=border-spacing:0;padding:0;margin:0;border:0><tr><td style=vertical-align:top;padding:0;margin:0;border:0><pre tabindex=0 style=color:#e2e4e5;background-color:#282a36;-moz-tab-size:4;-o-tab-size:4;tab-size:4><code><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 1
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 2
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 3
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 4
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 5
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 6
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 7
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 8
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 9
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">10
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">11
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">12
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">13
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">14
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">15
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">16
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">17
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">18
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">19
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">20
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">21
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">22
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">23
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">24
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">25
+</span></code></pre></td><td style=vertical-align:top;padding:0;margin:0;border:0;width:100%><pre tabindex=0 style=color:#e2e4e5;background-color:#282a36;-moz-tab-size:4;-o-tab-size:4;tab-size:4><code class=language-go data-lang=go><span style=display:flex><span><span style=color:#ff5c57>func</span> <span style=color:#57c7ff>newCmdInit</span>(out io.Writer, initOptions <span style=color:#ff6ac1>*</span>initOptions) <span style=color:#ff6ac1>*</span>cobra.Command {
+</span></span><span style=display:flex><span>  <span style=color:#ff6ac1>if</span> initOptions <span style=color:#ff6ac1>==</span> <span style=color:#ff6ac1>nil</span> { 
+</span></span><span style=display:flex><span>    initOptions = <span style=color:#57c7ff>newInitOptions</span>()
+</span></span><span style=display:flex><span>  }
+</span></span><span style=display:flex><span>  <span style=color:#ff6ac1>...</span>
+</span></span><span style=display:flex><span>  initRunner <span style=color:#ff6ac1>:=</span> workflow.<span style=color:#57c7ff>NewRunner</span>() 
+</span></span><span style=display:flex><span>  <span style=color:#ff6ac1>...</span>
+</span></span><span style=display:flex><span>  cmd <span style=color:#ff6ac1>:=</span> <span style=color:#ff6ac1>&amp;</span>cobra.Command{} 
+</span></span><span style=display:flex><span>  <span style=color:#ff6ac1>...</span>
+</span></span><span style=display:flex><span>  initRunner.<span style=color:#57c7ff>AppendPhase</span>(phases.<span style=color:#57c7ff>NewPreflightPhase</span>())
+</span></span><span style=display:flex><span>  initRunner.<span style=color:#57c7ff>AppendPhase</span>(phases.<span style=color:#57c7ff>NewCertsPhase</span>())
+</span></span><span style=display:flex><span>  initRunner.<span style=color:#57c7ff>AppendPhase</span>(phases.<span style=color:#57c7ff>NewKubeConfigPhase</span>())
+</span></span><span style=display:flex><span>  initRunner.<span style=color:#57c7ff>AppendPhase</span>(phases.<span style=color:#57c7ff>NewKubeletStartPhase</span>())
+</span></span><span style=display:flex><span>  initRunner.<span style=color:#57c7ff>AppendPhase</span>(phases.<span style=color:#57c7ff>NewControlPlanePhase</span>())
+</span></span><span style=display:flex><span>  initRunner.<span style=color:#57c7ff>AppendPhase</span>(phases.<span style=color:#57c7ff>NewEtcdPhase</span>())
+</span></span><span style=display:flex><span>  initRunner.<span style=color:#57c7ff>AppendPhase</span>(phases.<span style=color:#57c7ff>NewWaitControlPlanePhase</span>())
+</span></span><span style=display:flex><span>  initRunner.<span style=color:#57c7ff>AppendPhase</span>(phases.<span style=color:#57c7ff>NewUploadConfigPhase</span>())
+</span></span><span style=display:flex><span>  initRunner.<span style=color:#57c7ff>AppendPhase</span>(phases.<span style=color:#57c7ff>NewUploadCertsPhase</span>())
+</span></span><span style=display:flex><span>  initRunner.<span style=color:#57c7ff>AppendPhase</span>(phases.<span style=color:#57c7ff>NewMarkControlPlanePhase</span>())
+</span></span><span style=display:flex><span>  initRunner.<span style=color:#57c7ff>AppendPhase</span>(phases.<span style=color:#57c7ff>NewBootstrapTokenPhase</span>())
+</span></span><span style=display:flex><span>  initRunner.<span style=color:#57c7ff>AppendPhase</span>(phases.<span style=color:#57c7ff>NewKubeletFinalizePhase</span>())
+</span></span><span style=display:flex><span>  initRunner.<span style=color:#57c7ff>AppendPhase</span>(phases.<span style=color:#57c7ff>NewAddonPhase</span>())
+</span></span><span style=display:flex><span>  <span style=color:#ff6ac1>...</span>
+</span></span><span style=display:flex><span>  <span style=color:#ff6ac1>return</span> cmd
+</span></span><span style=display:flex><span>}
+</span></span></code></pre></td></tr></table></div></div><p>显然，这个函数主要做了四个事情：</p><ul><li>创建阶段执行所需要的Options</li><li>创建一个Runner</li><li>创建kubeadm init子命令所需要的cobra.Command结构体对象</li><li>为刚才创建的Runner挂载Phase</li></ul><p>那么我们以一个Phase为例分析NewPrefightPhase函数的具体实现：</p><div class=highlight><div style=color:#e2e4e5;background-color:#282a36;-moz-tab-size:4;-o-tab-size:4;tab-size:4><table style=border-spacing:0;padding:0;margin:0;border:0><tr><td style=vertical-align:top;padding:0;margin:0;border:0><pre tabindex=0 style=color:#e2e4e5;background-color:#282a36;-moz-tab-size:4;-o-tab-size:4;tab-size:4><code><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">1
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">2
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">3
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">4
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">5
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">6
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">7
+</span></code></pre></td><td style=vertical-align:top;padding:0;margin:0;border:0;width:100%><pre tabindex=0 style=color:#e2e4e5;background-color:#282a36;-moz-tab-size:4;-o-tab-size:4;tab-size:4><code class=language-go data-lang=go><span style=display:flex><span><span style=color:#ff5c57>func</span> <span style=color:#57c7ff>NewPreflightPhase</span>() workflow.Phase {
+</span></span><span style=display:flex><span>  <span style=color:#ff6ac1>return</span> workflow.Phase {
+</span></span><span style=display:flex><span>    Name:    <span style=color:#5af78e>&#34;preflight&#34;</span>,
+</span></span><span style=display:flex><span>    Run:     runPreflight,
+</span></span><span style=display:flex><span>    <span style=color:#ff6ac1>...</span>
+</span></span><span style=display:flex><span>  }
+</span></span><span style=display:flex><span>}
+</span></span></code></pre></td></tr></table></div></div><p>通过上述代码可以看到，NewXxxPhase函数主要做的事情是创建workflow.Phase结构体对象。这个Phase最重要的两个属性是Name和Run：</p><ul><li>Name: 用于定义Phase的名称</li><li>Run: 用于挂载Phase的具体逻辑，每个Phase都有一个与之对应的runXxx函数用于执行具体的业务逻辑。</li></ul><p>我们可以看到runPrefight的具体实现如下：</p><div class=highlight><div style=color:#e2e4e5;background-color:#282a36;-moz-tab-size:4;-o-tab-size:4;tab-size:4><table style=border-spacing:0;padding:0;margin:0;border:0><tr><td style=vertical-align:top;padding:0;margin:0;border:0><pre tabindex=0 style=color:#e2e4e5;background-color:#282a36;-moz-tab-size:4;-o-tab-size:4;tab-size:4><code><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 1
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 2
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 3
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 4
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 5
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 6
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 7
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 8
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 9
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">10
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">11
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">12
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">13
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">14
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">15
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">16
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">17
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">18
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">19
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">20
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">21
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">22
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">23
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">24
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">25
+</span></code></pre></td><td style=vertical-align:top;padding:0;margin:0;border:0;width:100%><pre tabindex=0 style=color:#e2e4e5;background-color:#282a36;-moz-tab-size:4;-o-tab-size:4;tab-size:4><code class=language-go data-lang=go><span style=display:flex><span><span style=color:#ff5c57>func</span> <span style=color:#57c7ff>runPreflight</span>(c workflow.RunData) <span style=color:#9aedfe>error</span> {
+</span></span><span style=display:flex><span>  data, ok <span style=color:#ff6ac1>:=</span> c.(InitData)
+</span></span><span style=display:flex><span>  <span style=color:#ff6ac1>if</span> !ok {
+</span></span><span style=display:flex><span>    <span style=color:#ff6ac1>return</span> errors.<span style=color:#57c7ff>New</span>(<span style=color:#5af78e>&#34;使用无效数据结构调用预检阶段&#34;</span>)
+</span></span><span style=display:flex><span>  }
+</span></span><span style=display:flex><span>
+</span></span><span style=display:flex><span>  fmt.<span style=color:#57c7ff>Println</span>(<span style=color:#5af78e>&#34;[预检] 执行预检&#34;</span>)
+</span></span><span style=display:flex><span>  <span style=color:#78787e>// 此处执行主机节点的检查
+</span></span></span><span style=display:flex><span><span style=color:#78787e></span>  <span style=color:#ff6ac1>if</span> err <span style=color:#ff6ac1>:=</span> preflight.<span style=color:#57c7ff>RunInitNodeChecks</span>(utilsexec.<span style=color:#57c7ff>New</span>(), data.<span style=color:#57c7ff>Cfg</span>(), data.<span style=color:#57c7ff>IgnorePreflightErrors</span>(), <span style=color:#ff6ac1>false</span>, <span style=color:#ff6ac1>false</span>); err <span style=color:#ff6ac1>!=</span> <span style=color:#ff6ac1>nil</span> {
+</span></span><span style=display:flex><span>    <span style=color:#ff6ac1>return</span> err
+</span></span><span style=display:flex><span>  }
+</span></span><span style=display:flex><span>
+</span></span><span style=display:flex><span>  <span style=color:#ff6ac1>if</span> !data.<span style=color:#57c7ff>DryRun</span>() {
+</span></span><span style=display:flex><span>    fmt.<span style=color:#57c7ff>Println</span>(<span style=color:#5af78e>&#34;[预检] 提取设置Kubernetes集群所需的镜像&#34;</span>)
+</span></span><span style=display:flex><span>    fmt.<span style=color:#57c7ff>Println</span>(<span style=color:#5af78e>&#34;[预检] 这可能需要一两分钟，具体取决于您的互联网连接速度&#34;</span>)
+</span></span><span style=display:flex><span>    fmt.<span style=color:#57c7ff>Println</span>(<span style=color:#5af78e>&#34;[预检] 您也可以使用 kubeadm config images pull&#34;</span>)
+</span></span><span style=display:flex><span>    <span style=color:#ff6ac1>if</span> err <span style=color:#ff6ac1>:=</span> preflight.<span style=color:#57c7ff>RunPullImagesCheck</span>(utilsexec.<span style=color:#57c7ff>New</span>(), data.<span style=color:#57c7ff>Cfg</span>(), data.<span style=color:#57c7ff>IgnorePreflightErrors</span>()); err <span style=color:#ff6ac1>!=</span> <span style=color:#ff6ac1>nil</span> {
+</span></span><span style=display:flex><span>      <span style=color:#ff6ac1>return</span> err
+</span></span><span style=display:flex><span>    }
+</span></span><span style=display:flex><span>  } <span style=color:#ff6ac1>else</span> {
+</span></span><span style=display:flex><span>    fmt.<span style=color:#57c7ff>Println</span>(<span style=color:#5af78e>&#34;[预检] 需要提取所需的镜像 (例如 kubeadm config images pull&#34;</span>)
+</span></span><span style=display:flex><span>  }
+</span></span><span style=display:flex><span>
+</span></span><span style=display:flex><span>  <span style=color:#ff6ac1>return</span> <span style=color:#ff6ac1>nil</span>
+</span></span><span style=display:flex><span>}
+</span></span></code></pre></td></tr></table></div></div><p>这个函数主要的事情是检查传过来的workflow.RunData是否可以断言成InitData类型，然后立刻调用prefight.RunInitNodeChecks()函数执行预检操作。按照之前的执行架构介绍章节，我们可以大胆猜测该函数里边有一堆XxxCheck结构体对象被调用了Check()方法。提前剧透，事实也是如此的。</p><p>值得一提，data.DryRun()函数的作用是用于读取用户执行kubeadm init传入的参数，kubeadm init由很多的子阶段构成，用户可以执行指定的阶段。如果只是执行预检操作并不对当前主机执行初始化操作，那么kubeadm将会提示我们可以拉取构建Kubernetes集群所需的容器镜像了。</p><p>进入preflight.RunInitNodeChecks函数，位于 <code>cmd/kubeadm/app/preflight/checks.go</code> 文件中：</p><div class=highlight><div style=color:#e2e4e5;background-color:#282a36;-moz-tab-size:4;-o-tab-size:4;tab-size:4><table style=border-spacing:0;padding:0;margin:0;border:0><tr><td style=vertical-align:top;padding:0;margin:0;border:0><pre tabindex=0 style=color:#e2e4e5;background-color:#282a36;-moz-tab-size:4;-o-tab-size:4;tab-size:4><code><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 1
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 2
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 3
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 4
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 5
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 6
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 7
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 8
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 9
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">10
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">11
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">12
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">13
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">14
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">15
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">16
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">17
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">18
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">19
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">20
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">21
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">22
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">23
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">24
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">25
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">26
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">27
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">28
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">29
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">30
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">31
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">32
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">33
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">34
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">35
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">36
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">37
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">38
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">39
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">40
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">41
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">42
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">43
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">44
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">45
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">46
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">47
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">48
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">49
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">50
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">51
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">52
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">53
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">54
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">55
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">56
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">57
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">58
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">59
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">60
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">61
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">62
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">63
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">64
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">65
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">66
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">67
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">68
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">69
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">70
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">71
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">72
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">73
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">74
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">75
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">76
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">77
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">78
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">79
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">80
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">81
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">82
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">83
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">84
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">85
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">86
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">87
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">88
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">89
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">90
+</span></code></pre></td><td style=vertical-align:top;padding:0;margin:0;border:0;width:100%><pre tabindex=0 style=color:#e2e4e5;background-color:#282a36;-moz-tab-size:4;-o-tab-size:4;tab-size:4><code class=language-go data-lang=go><span style=display:flex><span><span style=color:#ff5c57>func</span> <span style=color:#57c7ff>RunInitNodeChecks</span>(execer utilsexec.Interface, cfg <span style=color:#ff6ac1>*</span>kubeadmapi.InitConfiguration, ignorePreflightErrors sets.String, isSecondaryControlPlane <span style=color:#9aedfe>bool</span>, downloadCerts <span style=color:#9aedfe>bool</span>) <span style=color:#9aedfe>error</span> {
+</span></span><span style=display:flex><span>  <span style=color:#ff6ac1>if</span> !isSecondaryControlPlane {
+</span></span><span style=display:flex><span>    <span style=color:#78787e>// 首先，检查我们是否独立于其他预检检查并快速失败
+</span></span></span><span style=display:flex><span><span style=color:#78787e></span>    <span style=color:#ff6ac1>if</span> err <span style=color:#ff6ac1>:=</span> <span style=color:#57c7ff>RunRootCheckOnly</span>(ignorePreflightErrors); err <span style=color:#ff6ac1>!=</span> <span style=color:#ff6ac1>nil</span> {
+</span></span><span style=display:flex><span>      <span style=color:#ff6ac1>return</span> err
+</span></span><span style=display:flex><span>    }
+</span></span><span style=display:flex><span>  }
+</span></span><span style=display:flex><span>
+</span></span><span style=display:flex><span>  <span style=color:#78787e>// 获取到清单文件的绝对目录
+</span></span></span><span style=display:flex><span><span style=color:#78787e></span>  manifestsDir <span style=color:#ff6ac1>:=</span> filepath.<span style=color:#57c7ff>Join</span>(kubeadmconstants.KubernetesDir, kubeadmconstants.ManifestsSubDirName)
+</span></span><span style=display:flex><span>  checks <span style=color:#ff6ac1>:=</span> []Checker{
+</span></span><span style=display:flex><span>    NumCPUCheck{NumCPU: kubeadmconstants.ControlPlaneNumCPU},
+</span></span><span style=display:flex><span>    <span style=color:#78787e>// 只有Linux
+</span></span></span><span style=display:flex><span><span style=color:#78787e></span>    <span style=color:#78787e>// TODO: 支持其他操作系统，如果它支持控制平面的话
+</span></span></span><span style=display:flex><span><span style=color:#78787e></span>    <span style=color:#78787e>// 检查节点的内存大小
+</span></span></span><span style=display:flex><span><span style=color:#78787e></span>    MemCheck{Mem: kubeadmconstants.ControlPlaneMem},
+</span></span><span style=display:flex><span>    <span style=color:#78787e>// 检查Kubernetes版本和kubeadm的版本是否存在冲突
+</span></span></span><span style=display:flex><span><span style=color:#78787e></span>    KubernetesVersionCheck{KubernetesVersion: cfg.KubernetesVersion, KubeadmVersion: kubeadmversion.<span style=color:#57c7ff>Get</span>().GitVersion},
+</span></span><span style=display:flex><span>    <span style=color:#78787e>// 检查所需要的端口是否被墙了
+</span></span></span><span style=display:flex><span><span style=color:#78787e></span>    FirewalldCheck{ports: []<span style=color:#9aedfe>int</span>{<span style=color:#ff5c57>int</span>(cfg.LocalAPIEndpoint.BindPort), kubeadmconstants.KubeletPort}},
+</span></span><span style=display:flex><span>    <span style=color:#78787e>// 检查端口是否打开
+</span></span></span><span style=display:flex><span><span style=color:#78787e></span>    PortOpenCheck{port: <span style=color:#ff5c57>int</span>(cfg.LocalAPIEndpoint.BindPort)},
+</span></span><span style=display:flex><span>    PortOpenCheck{port: kubeadmconstants.KubeSchedulerPort},
+</span></span><span style=display:flex><span>    PortOpenCheck{port: kubeadmconstants.KubeControllerManagerPort},
+</span></span><span style=display:flex><span>    <span style=color:#78787e>// 检查静态Pod的YAML文件是否可用
+</span></span></span><span style=display:flex><span><span style=color:#78787e></span>    FileAvailableCheck{Path: kubeadmconstants.<span style=color:#57c7ff>GetStaticPodFilepath</span>(kubeadmconstants.KubeAPIServer, manifestsDir)},
+</span></span><span style=display:flex><span>    FileAvailableCheck{Path: kubeadmconstants.<span style=color:#57c7ff>GetStaticPodFilepath</span>(kubeadmconstants.KubeControllerManager, manifestsDir)},
+</span></span><span style=display:flex><span>    FileAvailableCheck{Path: kubeadmconstants.<span style=color:#57c7ff>GetStaticPodFilepath</span>(kubeadmconstants.KubeScheduler, manifestsDir)},
+</span></span><span style=display:flex><span>    FileAvailableCheck{Path: kubeadmconstants.<span style=color:#57c7ff>GetStaticPodFilepath</span>(kubeadmconstants.Etcd, manifestsDir)},
+</span></span><span style=display:flex><span>    <span style=color:#78787e>// 检查连接到API Server的HTTPS链接是直连还是走代理
+</span></span></span><span style=display:flex><span><span style=color:#78787e></span>    HTTPProxyCheck{Proto: <span style=color:#5af78e>&#34;https&#34;</span>, Host: cfg.LocalAPIEndpoint.AdvertiseAddress},
+</span></span><span style=display:flex><span>  }
+</span></span><span style=display:flex><span>
+</span></span><span style=display:flex><span>  cidrs <span style=color:#ff6ac1>:=</span> strings.<span style=color:#57c7ff>Split</span>(cfg.Networking.ServiceSubnet, <span style=color:#5af78e>&#34;,&#34;</span>)
+</span></span><span style=display:flex><span>  <span style=color:#ff6ac1>for</span> _, cidr <span style=color:#ff6ac1>:=</span> <span style=color:#ff6ac1>range</span> cidrs {
+</span></span><span style=display:flex><span>    checks = <span style=color:#ff5c57>append</span>(checks, HTTPProxyCIDRCheck{Proto: <span style=color:#5af78e>&#34;https&#34;</span>, CIDR: cidr})
+</span></span><span style=display:flex><span>  }
+</span></span><span style=display:flex><span>
+</span></span><span style=display:flex><span>  cidrs = strings.<span style=color:#57c7ff>Split</span>(cfg.Networking.PodSubnet, <span style=color:#5af78e>&#34;,&#34;</span>)
+</span></span><span style=display:flex><span>  <span style=color:#ff6ac1>for</span> _, cidr <span style=color:#ff6ac1>:=</span> <span style=color:#ff6ac1>range</span> cidrs {
+</span></span><span style=display:flex><span>    checks = <span style=color:#ff5c57>append</span>(checks, HTTPProxyCIDRCheck{Proto: <span style=color:#5af78e>&#34;https&#34;</span>, CIDR: cidr})
+</span></span><span style=display:flex><span>  }
+</span></span><span style=display:flex><span>
+</span></span><span style=display:flex><span>  <span style=color:#ff6ac1>if</span> !isSecondaryControlPlane {
+</span></span><span style=display:flex><span>    <span style=color:#78787e>// 一些其他的杂七杂八的检查
+</span></span></span><span style=display:flex><span><span style=color:#78787e></span>    checks = <span style=color:#57c7ff>addCommonChecks</span>(execer, cfg.KubernetesVersion, <span style=color:#ff6ac1>&amp;</span>cfg.NodeRegistration, checks)
+</span></span><span style=display:flex><span>
+</span></span><span style=display:flex><span>    <span style=color:#78787e>// 检查是否设置了网桥过滤器和IPv6相关标志
+</span></span></span><span style=display:flex><span><span style=color:#78787e></span>    <span style=color:#ff6ac1>if</span> ip <span style=color:#ff6ac1>:=</span> net.<span style=color:#57c7ff>ParseIP</span>(cfg.LocalAPIEndpoint.AdvertiseAddress); ip <span style=color:#ff6ac1>!=</span> <span style=color:#ff6ac1>nil</span> {
+</span></span><span style=display:flex><span>      <span style=color:#78787e>// 如果是IPv6地址的话，还得增加其他的检查
+</span></span></span><span style=display:flex><span><span style=color:#78787e></span>      <span style=color:#ff6ac1>if</span> utilsnet.<span style=color:#57c7ff>IsIPv6</span>(ip) {
+</span></span><span style=display:flex><span>        checks = <span style=color:#ff5c57>append</span>(checks,
+</span></span><span style=display:flex><span>          <span style=color:#78787e>// 检查指定的文件中是否包含指定的内容
+</span></span></span><span style=display:flex><span><span style=color:#78787e></span>          FileContentCheck{Path: bridgenf6, Content: []<span style=color:#9aedfe>byte</span>{<span style=color:#5af78e>&#39;1&#39;</span>}},
+</span></span><span style=display:flex><span>          FileContentCheck{Path: ipv6DefaultForwarding, Content: []<span style=color:#9aedfe>byte</span>{<span style=color:#5af78e>&#39;1&#39;</span>}},
+</span></span><span style=display:flex><span>        )
+</span></span><span style=display:flex><span>      }
+</span></span><span style=display:flex><span>    }
+</span></span><span style=display:flex><span>
+</span></span><span style=display:flex><span>    <span style=color:#78787e>// 如果使用外部etcd
+</span></span></span><span style=display:flex><span><span style=color:#78787e></span>    <span style=color:#ff6ac1>if</span> cfg.Etcd.External <span style=color:#ff6ac1>!=</span> <span style=color:#ff6ac1>nil</span> {
+</span></span><span style=display:flex><span>      <span style=color:#78787e>// 在创建集群之前，请检查外部etcd的版本
+</span></span></span><span style=display:flex><span><span style=color:#78787e></span>      checks = <span style=color:#ff5c57>append</span>(checks, ExternalEtcdVersionCheck{Etcd: cfg.Etcd})
+</span></span><span style=display:flex><span>    }
+</span></span><span style=display:flex><span>  }
+</span></span><span style=display:flex><span>
+</span></span><span style=display:flex><span>  <span style=color:#ff6ac1>if</span> cfg.Etcd.Local <span style=color:#ff6ac1>!=</span> <span style=color:#ff6ac1>nil</span> {
+</span></span><span style=display:flex><span>    <span style=color:#78787e>// 仅在需要安装本地etcd时进行etcd相关检查
+</span></span></span><span style=display:flex><span><span style=color:#78787e></span>    checks = <span style=color:#ff5c57>append</span>(checks,
+</span></span><span style=display:flex><span>      PortOpenCheck{port: kubeadmconstants.EtcdListenClientPort},
+</span></span><span style=display:flex><span>      PortOpenCheck{port: kubeadmconstants.EtcdListenPeerPort},
+</span></span><span style=display:flex><span>      DirAvailableCheck{Path: cfg.Etcd.Local.DataDir},
+</span></span><span style=display:flex><span>    )
+</span></span><span style=display:flex><span>  }
+</span></span><span style=display:flex><span>
+</span></span><span style=display:flex><span>  <span style=color:#ff6ac1>if</span> cfg.Etcd.External <span style=color:#ff6ac1>!=</span> <span style=color:#ff6ac1>nil</span> <span style=color:#ff6ac1>&amp;&amp;</span> !(isSecondaryControlPlane <span style=color:#ff6ac1>&amp;&amp;</span> downloadCerts) {
+</span></span><span style=display:flex><span>    <span style=color:#78787e>// 仅在使用外部etcd时检查etcd证书，不加入certs的自动下载
+</span></span></span><span style=display:flex><span><span style=color:#78787e></span>    <span style=color:#ff6ac1>if</span> cfg.Etcd.External.CAFile <span style=color:#ff6ac1>!=</span> <span style=color:#5af78e>&#34;&#34;</span> {
+</span></span><span style=display:flex><span>      checks = <span style=color:#ff5c57>append</span>(checks, FileExistingCheck{Path: cfg.Etcd.External.CAFile, Label: <span style=color:#5af78e>&#34;ExternalEtcdClientCertificates&#34;</span>})
+</span></span><span style=display:flex><span>    }
+</span></span><span style=display:flex><span>    <span style=color:#ff6ac1>if</span> cfg.Etcd.External.CertFile <span style=color:#ff6ac1>!=</span> <span style=color:#5af78e>&#34;&#34;</span> {
+</span></span><span style=display:flex><span>      checks = <span style=color:#ff5c57>append</span>(checks, FileExistingCheck{Path: cfg.Etcd.External.CertFile, Label: <span style=color:#5af78e>&#34;ExternalEtcdClientCertificates&#34;</span>})
+</span></span><span style=display:flex><span>    }
+</span></span><span style=display:flex><span>    <span style=color:#ff6ac1>if</span> cfg.Etcd.External.KeyFile <span style=color:#ff6ac1>!=</span> <span style=color:#5af78e>&#34;&#34;</span> {
+</span></span><span style=display:flex><span>      checks = <span style=color:#ff5c57>append</span>(checks, FileExistingCheck{Path: cfg.Etcd.External.KeyFile, Label: <span style=color:#5af78e>&#34;ExternalEtcdClientCertificates&#34;</span>})
+</span></span><span style=display:flex><span>    }
+</span></span><span style=display:flex><span>  }
+</span></span><span style=display:flex><span>
+</span></span><span style=display:flex><span>  <span style=color:#ff6ac1>return</span> <span style=color:#57c7ff>RunChecks</span>(checks, os.Stderr, ignorePreflightErrors)
+</span></span><span style=display:flex><span>}
+</span></span></code></pre></td></tr></table></div></div><p>显然，此函数构建checks数组，然后调用RunChecks()函数。上边的检查主要包含一下几个部分：</p><ul><li>处理器检查：检查所需要的对比值在cmd/kubeadm/app/constants/constans.go中进行了预定义。</li><li>内存检查</li><li>版本检查：Kubernetes版本和Kubeadm版本需要满足兼容性要求。</li><li>防火墙检查</li><li>端口检查</li><li>静态Pod文件检查：Kubernetes组件被部署为静态Pod</li><li>ETCD检查：主要分为内部ETCD检查和采用独立的外部ETCD检查</li><li>连通性检查</li></ul><p>前文提到过，这些XxxCheck实现的是Checker接口：</p><div class=highlight><div style=color:#e2e4e5;background-color:#282a36;-moz-tab-size:4;-o-tab-size:4;tab-size:4><table style=border-spacing:0;padding:0;margin:0;border:0><tr><td style=vertical-align:top;padding:0;margin:0;border:0><pre tabindex=0 style=color:#e2e4e5;background-color:#282a36;-moz-tab-size:4;-o-tab-size:4;tab-size:4><code><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">1
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">2
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">3
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">4
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">5
+</span></code></pre></td><td style=vertical-align:top;padding:0;margin:0;border:0;width:100%><pre tabindex=0 style=color:#e2e4e5;background-color:#282a36;-moz-tab-size:4;-o-tab-size:4;tab-size:4><code class=language-go data-lang=go><span style=display:flex><span><span style=color:#78787e>// Checker 验证系统状态，以确保kubeadm尽可能地成功。
+</span></span></span><span style=display:flex><span><span style=color:#78787e></span><span style=color:#ff5c57>type</span> Checker <span style=color:#ff5c57>interface</span> {
+</span></span><span style=display:flex><span>  <span style=color:#57c7ff>Check</span>() (warnings, errorList []<span style=color:#9aedfe>error</span>)
+</span></span><span style=display:flex><span>  <span style=color:#57c7ff>Name</span>() <span style=color:#9aedfe>string</span>
+</span></span><span style=display:flex><span>}
+</span></span></code></pre></td></tr></table></div></div><p>Name()函数的实现一般是返回该Check的名称，例如:</p><div class=highlight><div style=color:#e2e4e5;background-color:#282a36;-moz-tab-size:4;-o-tab-size:4;tab-size:4><table style=border-spacing:0;padding:0;margin:0;border:0><tr><td style=vertical-align:top;padding:0;margin:0;border:0><pre tabindex=0 style=color:#e2e4e5;background-color:#282a36;-moz-tab-size:4;-o-tab-size:4;tab-size:4><code><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">1
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">2
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">3
+</span></code></pre></td><td style=vertical-align:top;padding:0;margin:0;border:0;width:100%><pre tabindex=0 style=color:#e2e4e5;background-color:#282a36;-moz-tab-size:4;-o-tab-size:4;tab-size:4><code class=language-go data-lang=go><span style=display:flex><span><span style=color:#ff5c57>func</span> (FirewalldCheck) <span style=color:#57c7ff>Name</span>() <span style=color:#9aedfe>string</span> {
+</span></span><span style=display:flex><span>  <span style=color:#ff6ac1>return</span> <span style=color:#5af78e>&#34;Firewalld&#34;</span>
+</span></span><span style=display:flex><span>}
+</span></span></code></pre></td></tr></table></div></div><p>Check()函数则是真正的处理逻辑。RunCheck()函数的内部实现主要是遍历checks数组，调用对应的Check()函数实现检查，然后返回检查错误信息：</p><div class=highlight><div style=color:#e2e4e5;background-color:#282a36;-moz-tab-size:4;-o-tab-size:4;tab-size:4><table style=border-spacing:0;padding:0;margin:0;border:0><tr><td style=vertical-align:top;padding:0;margin:0;border:0><pre tabindex=0 style=color:#e2e4e5;background-color:#282a36;-moz-tab-size:4;-o-tab-size:4;tab-size:4><code><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 1
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 2
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 3
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 4
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 5
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 6
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 7
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 8
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 9
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">10
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">11
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">12
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">13
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">14
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">15
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">16
+</span></code></pre></td><td style=vertical-align:top;padding:0;margin:0;border:0;width:100%><pre tabindex=0 style=color:#e2e4e5;background-color:#282a36;-moz-tab-size:4;-o-tab-size:4;tab-size:4><code class=language-go data-lang=go><span style=display:flex><span><span style=color:#78787e>// RunChecks 运行每一个检查，显示它的警告/错误，如果任何错误发生并且一旦所有的检查被处理将退出。
+</span></span></span><span style=display:flex><span><span style=color:#78787e></span><span style=color:#ff5c57>func</span> <span style=color:#57c7ff>RunChecks</span>(checks []Checker, ww io.Writer, ignorePreflightErrors sets.String) <span style=color:#9aedfe>error</span> {
+</span></span><span style=display:flex><span>  <span style=color:#ff6ac1>...</span>
+</span></span><span style=display:flex><span>  <span style=color:#ff6ac1>for</span> _, c <span style=color:#ff6ac1>:=</span> <span style=color:#ff6ac1>range</span> checks {
+</span></span><span style=display:flex><span>    name <span style=color:#ff6ac1>:=</span> c.<span style=color:#57c7ff>Name</span>()
+</span></span><span style=display:flex><span>    warnings, errs <span style=color:#ff6ac1>:=</span> c.<span style=color:#57c7ff>Check</span>()
+</span></span><span style=display:flex><span>    <span style=color:#ff6ac1>...</span>
+</span></span><span style=display:flex><span>    <span style=color:#ff6ac1>for</span> _, w <span style=color:#ff6ac1>:=</span> <span style=color:#ff6ac1>range</span> warnings {
+</span></span><span style=display:flex><span>      _, _ = io.<span style=color:#57c7ff>WriteString</span>(ww, fmt.<span style=color:#57c7ff>Sprintf</span>(<span style=color:#5af78e>&#34;\t[警告 %s]: %v\n&#34;</span>, name, w))
+</span></span><span style=display:flex><span>    }
+</span></span><span style=display:flex><span>    <span style=color:#ff6ac1>for</span> _, i <span style=color:#ff6ac1>:=</span> <span style=color:#ff6ac1>range</span> errs {
+</span></span><span style=display:flex><span>      errsBuffer.<span style=color:#57c7ff>WriteString</span>(fmt.<span style=color:#57c7ff>Sprintf</span>(<span style=color:#5af78e>&#34;\t[错误 %s]: %v\n&#34;</span>, name, i.<span style=color:#57c7ff>Error</span>()))
+</span></span><span style=display:flex><span>    }
+</span></span><span style=display:flex><span>  }
+</span></span><span style=display:flex><span>  <span style=color:#ff6ac1>...</span>
+</span></span><span style=display:flex><span>}
+</span></span></code></pre></td></tr></table></div></div><p>在NewKubeletStartPhase阶段，尝试在主机上启动kubelet服务，Kubeadm为进程管理实现了通用的结构，位于<code>cmd/kubeadm/app/phases/kubelet/kubelet.go</code>中：</p><div class=highlight><div style=color:#e2e4e5;background-color:#282a36;-moz-tab-size:4;-o-tab-size:4;tab-size:4><table style=border-spacing:0;padding:0;margin:0;border:0><tr><td style=vertical-align:top;padding:0;margin:0;border:0><pre tabindex=0 style=color:#e2e4e5;background-color:#282a36;-moz-tab-size:4;-o-tab-size:4;tab-size:4><code><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">1
+</span></code></pre></td><td style=vertical-align:top;padding:0;margin:0;border:0;width:100%><pre tabindex=0 style=color:#e2e4e5;background-color:#282a36;-moz-tab-size:4;-o-tab-size:4;tab-size:4><code class=language-go data-lang=go><span style=display:flex><span>initSystem, err <span style=color:#ff6ac1>:=</span> initsystem.<span style=color:#57c7ff>GetInitSystem</span>()
+</span></span></code></pre></td></tr></table></div></div><p>这行代码调用了initsystem包的GetInitSystem()方法，这个方法返回一个通用的跨平台的操作系统服务管理器，它实现了针对不同的操作系统服务的增删改查：</p><div class=highlight><div style=color:#e2e4e5;background-color:#282a36;-moz-tab-size:4;-o-tab-size:4;tab-size:4><table style=border-spacing:0;padding:0;margin:0;border:0><tr><td style=vertical-align:top;padding:0;margin:0;border:0><pre tabindex=0 style=color:#e2e4e5;background-color:#282a36;-moz-tab-size:4;-o-tab-size:4;tab-size:4><code><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">1
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">2
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">3
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">4
+</span></code></pre></td><td style=vertical-align:top;padding:0;margin:0;border:0;width:100%><pre tabindex=0 style=color:#e2e4e5;background-color:#282a36;-moz-tab-size:4;-o-tab-size:4;tab-size:4><code class=language-go data-lang=go><span style=display:flex><span><span style=color:#78787e>// WindowsInitSystem 是InitSystem的Windows实现
+</span></span></span><span style=display:flex><span><span style=color:#78787e></span><span style=color:#ff5c57>type</span> WindowsInitSystem <span style=color:#ff5c57>struct</span>{}
+</span></span><span style=display:flex><span><span style=color:#78787e>// OpenRCInitSystem 实现OpenRC的实现
+</span></span></span><span style=display:flex><span><span style=color:#78787e></span><span style=color:#ff5c57>type</span> OpenRCInitSystem <span style=color:#ff5c57>struct</span>{}
+</span></span></code></pre></td></tr></table></div></div><p>initsystem工具包位于 <code>cmd/kubeadm/app/util/initsystem</code>下。</p><p>介绍完NewKubeletStartPhase阶段，再看看NewWaitControlPlane阶段，该阶段用于实现等待API Server成功运行，主要功能是轮询一个HTTP API，然后检查其值是否为ok，超过timeout秒后失败退出，kubeadm会报告初始化Kubernetes集群失败。相同的思路，NewWaitControlPlanePhase()函数会通过Run字段挂载runWaitControlPlanePhase()函数，这个函数会执行具体的业务逻辑，下面是这个函数的具体实现：</p><div class=highlight><div style=color:#e2e4e5;background-color:#282a36;-moz-tab-size:4;-o-tab-size:4;tab-size:4><table style=border-spacing:0;padding:0;margin:0;border:0><tr><td style=vertical-align:top;padding:0;margin:0;border:0><pre tabindex=0 style=color:#e2e4e5;background-color:#282a36;-moz-tab-size:4;-o-tab-size:4;tab-size:4><code><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 1
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 2
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 3
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 4
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 5
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 6
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 7
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 8
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 9
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">10
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">11
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">12
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">13
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">14
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">15
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">16
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">17
+</span></code></pre></td><td style=vertical-align:top;padding:0;margin:0;border:0;width:100%><pre tabindex=0 style=color:#e2e4e5;background-color:#282a36;-moz-tab-size:4;-o-tab-size:4;tab-size:4><code class=language-go data-lang=go><span style=display:flex><span><span style=color:#ff5c57>func</span> <span style=color:#57c7ff>runWaitControlPlanePhase</span>(c workflow.RunData) <span style=color:#9aedfe>error</span> {
+</span></span><span style=display:flex><span>  <span style=color:#ff6ac1>...</span>
+</span></span><span style=display:flex><span>  timeout <span style=color:#ff6ac1>:=</span> data.<span style=color:#57c7ff>Cfg</span>().ClusterConfiguration.APIServer.TimeoutForControlPlane.Duration
+</span></span><span style=display:flex><span>  waiter, err <span style=color:#ff6ac1>:=</span> <span style=color:#57c7ff>newControlPlaneWaiter</span>(data.<span style=color:#57c7ff>DryRun</span>(), timeout, client, data.<span style=color:#57c7ff>OutputWriter</span>())
+</span></span><span style=display:flex><span>  <span style=color:#ff6ac1>if</span> err <span style=color:#ff6ac1>!=</span> <span style=color:#ff6ac1>nil</span> {
+</span></span><span style=display:flex><span>    <span style=color:#ff6ac1>return</span> errors.<span style=color:#57c7ff>Wrap</span>(err, <span style=color:#5af78e>&#34;error creating waiter&#34;</span>)
+</span></span><span style=display:flex><span>  }
+</span></span><span style=display:flex><span>
+</span></span><span style=display:flex><span>  <span style=color:#ff6ac1>...</span>
+</span></span><span style=display:flex><span>
+</span></span><span style=display:flex><span>  <span style=color:#ff6ac1>if</span> err <span style=color:#ff6ac1>:=</span> waiter.<span style=color:#57c7ff>WaitForKubeletAndFunc</span>(waiter.WaitForAPI); err <span style=color:#ff6ac1>!=</span> <span style=color:#ff6ac1>nil</span> {
+</span></span><span style=display:flex><span>    <span style=color:#ff6ac1>...</span>
+</span></span><span style=display:flex><span>    <span style=color:#ff6ac1>return</span> errors.<span style=color:#57c7ff>New</span>(<span style=color:#5af78e>&#34;无法初始化Kubernetes群集&#34;</span>)
+</span></span><span style=display:flex><span>  }
+</span></span><span style=display:flex><span>
+</span></span><span style=display:flex><span>  <span style=color:#ff6ac1>return</span> <span style=color:#ff6ac1>nil</span>
+</span></span><span style=display:flex><span>}
+</span></span></code></pre></td></tr></table></div></div><p>显然，获取到预定义的timeout后，通过newControlPlaneWaiter函数创建一个Waiter。接下来通过调用waiter的WaitForKubeletAndFunc()方法，然后传入waiter.WaitForAPI函数的指针，进入轮询的具体逻辑。</p><p>WaitForKubeletAndFunc()函数创建了两个Goroutinue，一个Goroutinue调用了WaitForHealthyKubelet()函数实现Kubelet进程的监控，另一个Goroutinue就是执行传进来的WaitForAPI()函数了。</p><div class=highlight><div style=color:#e2e4e5;background-color:#282a36;-moz-tab-size:4;-o-tab-size:4;tab-size:4><table style=border-spacing:0;padding:0;margin:0;border:0><tr><td style=vertical-align:top;padding:0;margin:0;border:0><pre tabindex=0 style=color:#e2e4e5;background-color:#282a36;-moz-tab-size:4;-o-tab-size:4;tab-size:4><code><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 1
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 2
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 3
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 4
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 5
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 6
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 7
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 8
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 9
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">10
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">11
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">12
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">13
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">14
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">15
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">16
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">17
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">18
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">19
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">20
+</span></code></pre></td><td style=vertical-align:top;padding:0;margin:0;border:0;width:100%><pre tabindex=0 style=color:#e2e4e5;background-color:#282a36;-moz-tab-size:4;-o-tab-size:4;tab-size:4><code class=language-go data-lang=go><span style=display:flex><span><span style=color:#78787e>// WaitForKubeletAndFunc 主要等待函数f执行，尽管这可能需要一些时间。
+</span></span></span><span style=display:flex><span><span style=color:#78787e>// 如果这需要很长时间，并且kubelet /healthz 持续不健康，kubeadm将在一段时间的指数回退后出错
+</span></span></span><span style=display:flex><span><span style=color:#78787e></span><span style=color:#ff5c57>func</span> (w <span style=color:#ff6ac1>*</span>KubeWaiter) <span style=color:#57c7ff>WaitForKubeletAndFunc</span>(f <span style=color:#ff5c57>func</span>() <span style=color:#9aedfe>error</span>) <span style=color:#9aedfe>error</span> {
+</span></span><span style=display:flex><span>  errorChan <span style=color:#ff6ac1>:=</span> <span style=color:#ff5c57>make</span>(<span style=color:#ff5c57>chan</span> <span style=color:#9aedfe>error</span>, <span style=color:#ff9f43>1</span>)
+</span></span><span style=display:flex><span>
+</span></span><span style=display:flex><span>  <span style=color:#ff6ac1>go</span> <span style=color:#ff5c57>func</span>(errC <span style=color:#ff5c57>chan</span> <span style=color:#9aedfe>error</span>, waiter Waiter) {
+</span></span><span style=display:flex><span>    <span style=color:#ff6ac1>if</span> err <span style=color:#ff6ac1>:=</span> waiter.<span style=color:#57c7ff>WaitForHealthyKubelet</span>(<span style=color:#ff9f43>40</span><span style=color:#ff6ac1>*</span>time.Second, fmt.<span style=color:#57c7ff>Sprintf</span>(<span style=color:#5af78e>&#34;http://localhost:%d/healthz&#34;</span>, kubeadmconstants.KubeletHealthzPort)); err <span style=color:#ff6ac1>!=</span> <span style=color:#ff6ac1>nil</span> {
+</span></span><span style=display:flex><span>      errC <span style=color:#ff6ac1>&lt;-</span> err
+</span></span><span style=display:flex><span>    }
+</span></span><span style=display:flex><span>  }(errorChan, w)
+</span></span><span style=display:flex><span>
+</span></span><span style=display:flex><span>  <span style=color:#ff6ac1>go</span> <span style=color:#ff5c57>func</span>(errC <span style=color:#ff5c57>chan</span> <span style=color:#9aedfe>error</span>, waiter Waiter) {
+</span></span><span style=display:flex><span>    <span style=color:#78787e>// 这个主goroutine将f函数返回的任何内容(错误与否)发送到通道
+</span></span></span><span style=display:flex><span><span style=color:#78787e></span>    <span style=color:#78787e>// 这是为了继续成功(无错误)，或者如果函数返回错误则失败
+</span></span></span><span style=display:flex><span><span style=color:#78787e></span>    errC <span style=color:#ff6ac1>&lt;-</span> <span style=color:#57c7ff>f</span>()
+</span></span><span style=display:flex><span>  }(errorChan, w)
+</span></span><span style=display:flex><span>
+</span></span><span style=display:flex><span>  <span style=color:#78787e>// 此调用被阻止，直到其中一个goroutines发送到errorChan
+</span></span></span><span style=display:flex><span><span style=color:#78787e></span>  <span style=color:#ff6ac1>return</span> <span style=color:#ff6ac1>&lt;-</span>errorChan
+</span></span><span style=display:flex><span>}
+</span></span></code></pre></td></tr></table></div></div><p>WaitForHealthyKubelet()函数与WaitForAPI()函数的实现是完全不一样的，虽然都是轮询。WaitForHealthyKubelet()函数内部使用的是time包的time.Sleep()方法，睡眠一段时间后执行TryRunCommand()函数尝试去运行一个函数，函数内部的实现是通过net/http包创建了HTTP请求。</p><p>TryRunCommand()函数实现了轮询的具体逻辑，主要是wait.ExponentialBackoff()函数传入的匿名函数。这个wait.ExponentialBackoff()函数持续检查某一个条件，如果超时或者等待函数返回。
+而WaitForAPI()的实现却使用了wait.PollImmediate()方法去一直发送HTTP请求。wait.PollImmediate()方法最终是调用了poll()方法：</p><div class=highlight><div style=color:#e2e4e5;background-color:#282a36;-moz-tab-size:4;-o-tab-size:4;tab-size:4><table style=border-spacing:0;padding:0;margin:0;border:0><tr><td style=vertical-align:top;padding:0;margin:0;border:0><pre tabindex=0 style=color:#e2e4e5;background-color:#282a36;-moz-tab-size:4;-o-tab-size:4;tab-size:4><code><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 1
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 2
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 3
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 4
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 5
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 6
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 7
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 8
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 9
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">10
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">11
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">12
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">13
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">14
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">15
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">16
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">17
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">18
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">19
+</span></code></pre></td><td style=vertical-align:top;padding:0;margin:0;border:0;width:100%><pre tabindex=0 style=color:#e2e4e5;background-color:#282a36;-moz-tab-size:4;-o-tab-size:4;tab-size:4><code class=language-go data-lang=go><span style=display:flex><span><span style=color:#ff5c57>func</span> <span style=color:#57c7ff>poll</span>(ctx context.Context, immediate <span style=color:#9aedfe>bool</span>, wait WaitWithContextFunc, condition ConditionWithContextFunc) <span style=color:#9aedfe>error</span> {
+</span></span><span style=display:flex><span>  <span style=color:#ff6ac1>if</span> immediate {
+</span></span><span style=display:flex><span>    done, err <span style=color:#ff6ac1>:=</span> <span style=color:#57c7ff>runConditionWithCrashProtectionWithContext</span>(ctx, condition)
+</span></span><span style=display:flex><span>    <span style=color:#ff6ac1>if</span> err <span style=color:#ff6ac1>!=</span> <span style=color:#ff6ac1>nil</span> {
+</span></span><span style=display:flex><span>      <span style=color:#ff6ac1>return</span> err
+</span></span><span style=display:flex><span>    }
+</span></span><span style=display:flex><span>    <span style=color:#ff6ac1>if</span> done {
+</span></span><span style=display:flex><span>      <span style=color:#ff6ac1>return</span> <span style=color:#ff6ac1>nil</span>
+</span></span><span style=display:flex><span>    }
+</span></span><span style=display:flex><span>  }
+</span></span><span style=display:flex><span>
+</span></span><span style=display:flex><span>  <span style=color:#ff6ac1>select</span> {
+</span></span><span style=display:flex><span>  <span style=color:#ff6ac1>case</span> <span style=color:#ff6ac1>&lt;-</span>ctx.<span style=color:#57c7ff>Done</span>():
+</span></span><span style=display:flex><span>    <span style=color:#78787e>// 返回ctx.Err()将破坏向后兼容性
+</span></span></span><span style=display:flex><span><span style=color:#78787e></span>    <span style=color:#ff6ac1>return</span> ErrWaitTimeout
+</span></span><span style=display:flex><span>  <span style=color:#ff6ac1>default</span>:
+</span></span><span style=display:flex><span>    <span style=color:#ff6ac1>return</span> <span style=color:#57c7ff>WaitForWithContext</span>(ctx, wait, condition)
+</span></span><span style=display:flex><span>  }
+</span></span><span style=display:flex><span>}
+</span></span></code></pre></td></tr></table></div></div><p>显而易见了，用的是select-case模式实现的。</p><h1 id=细说-kubeadm-join>细说 kubeadm join</h1><p>与kubeadm init类似，在 <code>cmd/kubeadm/app/cmd/join.go</code> 中也做了同样的事情，不同的是kubeadm join子命令的Phase列表与kubeadm init不同：</p><div class=highlight><div style=color:#e2e4e5;background-color:#282a36;-moz-tab-size:4;-o-tab-size:4;tab-size:4><table style=border-spacing:0;padding:0;margin:0;border:0><tr><td style=vertical-align:top;padding:0;margin:0;border:0><pre tabindex=0 style=color:#e2e4e5;background-color:#282a36;-moz-tab-size:4;-o-tab-size:4;tab-size:4><code><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">1
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">2
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">3
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">4
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">5
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">6
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">7
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">8
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">9
+</span></code></pre></td><td style=vertical-align:top;padding:0;margin:0;border:0;width:100%><pre tabindex=0 style=color:#e2e4e5;background-color:#282a36;-moz-tab-size:4;-o-tab-size:4;tab-size:4><code class=language-go data-lang=go><span style=display:flex><span><span style=color:#ff5c57>func</span> <span style=color:#57c7ff>newCmdJoin</span>(out io.Writer, joinOptions <span style=color:#ff6ac1>*</span>joinOptions) <span style=color:#ff6ac1>*</span>cobra.Command {
+</span></span><span style=display:flex><span>  <span style=color:#ff6ac1>...</span>
+</span></span><span style=display:flex><span>  joinRunner.<span style=color:#57c7ff>AppendPhase</span>(phases.<span style=color:#57c7ff>NewPreflightPhase</span>())
+</span></span><span style=display:flex><span>  joinRunner.<span style=color:#57c7ff>AppendPhase</span>(phases.<span style=color:#57c7ff>NewControlPlanePreparePhase</span>())
+</span></span><span style=display:flex><span>  joinRunner.<span style=color:#57c7ff>AppendPhase</span>(phases.<span style=color:#57c7ff>NewCheckEtcdPhase</span>())
+</span></span><span style=display:flex><span>  joinRunner.<span style=color:#57c7ff>AppendPhase</span>(phases.<span style=color:#57c7ff>NewKubeletStartPhase</span>())
+</span></span><span style=display:flex><span>  joinRunner.<span style=color:#57c7ff>AppendPhase</span>(phases.<span style=color:#57c7ff>NewControlPlaneJoinPhase</span>())
+</span></span><span style=display:flex><span>  <span style=color:#ff6ac1>...</span>
+</span></span><span style=display:flex><span>}
+</span></span></code></pre></td></tr></table></div></div><p>执行kubeadm join除了要执行与kubeadm init相同的Phase之外，最重要的是NewControlPlanePreparePhase()函数和NewControlPlaneJoinPhase()函数创建的阶段。</p><p>NewControlPlanePreparePhase()函数总共分成了四个子阶段：</p><ul><li>newControlPlanePrepareDownloadCertsSubphase(): 下载证书</li><li>newControlPlanePrepareCertsSubphase(): 准备证书</li><li>newControlPlanePrepareKubeconfigSubphase(): 准备kubeconfig文件</li><li>newControlPlanePrepareControlPlaneSubphase(): 创建静态Pod的清单文件</li></ul><p>而NewControlPlaneJoinPhase()函数主要做的事情就是更新ETCD、更新状态（ConfigMap的ClusterStatus）和打标记。</p><ul><li>newEtcdLocalSubphase()</li><li>newUpdateStatusSubphase()</li><li>newMarkControlPlaneSubphase()</li></ul><h1 id=细说-kubeadm-reset>细说 kubeadm reset</h1><p>显然，根据kubeadm init和kubeadm join得出的结论，kubeadm reset子命令的实现在 <code>cmd/kubeadm/app/cmd/reset.go</code> 文件中：</p><div class=highlight><div style=color:#e2e4e5;background-color:#282a36;-moz-tab-size:4;-o-tab-size:4;tab-size:4><table style=border-spacing:0;padding:0;margin:0;border:0><tr><td style=vertical-align:top;padding:0;margin:0;border:0><pre tabindex=0 style=color:#e2e4e5;background-color:#282a36;-moz-tab-size:4;-o-tab-size:4;tab-size:4><code><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">1
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">2
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">3
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">4
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">5
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">6
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">7
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">8
+</span></code></pre></td><td style=vertical-align:top;padding:0;margin:0;border:0;width:100%><pre tabindex=0 style=color:#e2e4e5;background-color:#282a36;-moz-tab-size:4;-o-tab-size:4;tab-size:4><code class=language-go data-lang=go><span style=display:flex><span><span style=color:#ff5c57>func</span> <span style=color:#57c7ff>newCmdReset</span>(in io.Reader, out io.Writer, resetOptions <span style=color:#ff6ac1>*</span>resetOptions) <span style=color:#ff6ac1>*</span>cobra.Command {
+</span></span><span style=display:flex><span>  <span style=color:#ff6ac1>...</span>
+</span></span><span style=display:flex><span>  resetRunner.<span style=color:#57c7ff>AppendPhase</span>(phases.<span style=color:#57c7ff>NewPreflightPhase</span>())
+</span></span><span style=display:flex><span>  resetRunner.<span style=color:#57c7ff>AppendPhase</span>(phases.<span style=color:#57c7ff>NewUpdateClusterStatus</span>())
+</span></span><span style=display:flex><span>  resetRunner.<span style=color:#57c7ff>AppendPhase</span>(phases.<span style=color:#57c7ff>NewRemoveETCDMemberPhase</span>())
+</span></span><span style=display:flex><span>  resetRunner.<span style=color:#57c7ff>AppendPhase</span>(phases.<span style=color:#57c7ff>NewCleanupNodePhase</span>())
+</span></span><span style=display:flex><span>  <span style=color:#ff6ac1>...</span>
+</span></span><span style=display:flex><span>}
+</span></span></code></pre></td></tr></table></div></div><p>只要我们搞懂了kubeadm init，重置集群的操作就更简单的，无非就是预检完成以后更新集群状态，然后将API Server、ControllerManager等一些静态Pod从etcd中删了（通过etcd的Go客户端执行Delete操作），然后停止进程再删除集群上的文件和目录，还会用到之前介绍的initsystem工具库。</p></div></div><footer id=footer><div class=footer-inner><div><div style=font-weight:700;margin-bottom:15px>发布地址</div><div><a href=https://halo.wecomz.com>Halo的主页</a></div><div><a href=https://bluemiaomiao.gitee.io>中国境内镜像</a></div><div><a href=https://bluemiaomiao.github.io>中国境外镜像</a></div></div><div><div style=font-weight:700;margin-bottom:15px>友情链接</div><div><a href=https://debuginn.cn>DebugInn</a></div><div><a href=https://blog.csdn.net/qq_43442524>普通Gopher</a></div></div><div><div style=font-weight:700;margin-bottom:15px>开源软件</div><div><a href=https://bluemiaomiao.github.io/libsshd/>OpenSSH Configuration Library</a></div><div><a href=https://bluemiaomiao.github.io/fastdfs-spring-boot-starter/>FastDFS SpringBoot Starter</a></div><div><a href=https://bluemiaomiao.github.io/librocm-smi-gobinding/>AMD ROCm SMI for Golang</a></div><div><a href=https://bluemiaomiao.github.io/libnvml-smi-gobinding>NVIDIA NVML SMI for Golang</a></div><div><a href=https://www.wecomz.com/software/zgraphics>zGraphics(Prometheus GPU Exporter)</a></div><div><a href=https://www.wecomz.com/software/ztrader>zTrader Framework</a></div></div><div><div style=font-weight:700;margin-bottom:15px>其他</div><div><a href=https://values.wecomz.com>WecomZ 价值观</a></div></div></div><div class=icp><div style=min-height:13px;min-width:13px;background-image:url(/image/beian.png);background-repeat:no-repeat;background-size:contain;margin-right:5px></div><div><a href=https://beian.miit.gov.cn target=_blank>鲁ICP备2023019133号</a></div></div></footer></body><script src=../../js/halo.js type=text/javascript></script></html>
