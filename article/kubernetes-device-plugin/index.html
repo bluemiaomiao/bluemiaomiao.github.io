@@ -1,4 +1,4 @@
-<!doctype html><html lang=zh><head><meta charset=utf-8><meta http-equiv=x-ua-compatible content="IE=edge"><meta name=viewport content="width=device-width,initial-scale=1"><title>Halo的主页 - Kubernetes Device Plugin 开发详解</title><link rel=stylesheet href=https://cdn.jsdelivr.net/npm/normalize.css@8.0.1/normalize.min.css><link rel=stylesheet href=https://cdnjs.cloudflare.com/ajax/libs/animate.css/4.1.1/animate.min.css><link rel=preconnect href=https://fonts.googleapis.com><link rel=preconnect href=https://fonts.gstatic.com crossorigin><link href="https://fonts.googleapis.com/css2?family=Fira+Code:wght@500&display=swap" rel=stylesheet><link rel=stylesheet href=../../css/halo.css><link rel=stylesheet href=../../css/github-markdown.css><link rel=stylesheet href=../../css/github-markdown-light.css><link rel=stylesheet href=../../css/markdown-rewrite.css><link rel="shortcut icon" href=favicon.ico type=image/x-icon><link rel=apple-touch-icon sizes=180x180 href=../../apple-touch-icon.png><link rel=icon type=image/png sizes=32x32 href=../../favicon-32x32.png><link rel=icon type=image/png sizes=16x16 href=../../favicon-16x16.png><link rel=manifest href=../../site.webmanifest><link rel=mask-icon href=../../safari-pinned-tab.svg color=#5bbad5><meta name=msapplication-TileColor content="#ffffff"><meta name=theme-color content="#ffffff"><style>body{display:flex;flex-direction:column;align-items:center}a{color:#5e5e5e;text-decoration:none}</style></head><body><div id=mob-warning>当前内容暂不适配移动端。<br>请使用桌面端查看。</div><div id=top style=width:0;height:0></div><div class=top-button><a href=#top style=text-decoration:none>Top</a></div><div id=toc>目<br>录</div><div id=header><div style=width:100%;display:flex;align-items:center;height:100%><div class=disable-select style=display:flex;justify-content:flex-end;font-size:14pt;font-weight:700;color:#555><div style=margin-right:35px></div><div><a style=color:#555;text-decoration:none href=../../>&lt;Halo的主页/></a></div></div><div style=flex:1;display:flex;justify-content:flex-end;font-size:14pt;font-weight:700;color:#555><div style=margin-right:45px><a href=https://www.wecomz.com style=color:#555;text-decoration:none>WecomZ</a></div><div style=margin-right:45px><a href=../../article style=color:#555;text-decoration:none>文章</a></div><div style=margin-right:45px><a href=../../video style=color:#555;text-decoration:none>视频</a></div><div style=margin-right:45px><a href=../../about style=color:#555;text-decoration:none>关于</a></div><div style=margin-left:35px></div></div></div></div><div id=article-content><div class=content-header><div>《Kubernetes Device Plugin 开发详解》</div><div style=font-size:10pt;height:100%;display:flex;align-items:flex-end;padding-bottom:12pt;color:#5e5e5e;font-weight:lighter>在2023/07/30 16:49:46更新，大约共1500字。</div></div><div class=content-desc><div style=font-size:50pt;font-weight:700;color:#eee;padding-right:15px>“</div><div style=line-height:50pt;color:#9b9b9b>学习 Device Plugin 开发</div><div style=font-size:50pt;font-weight:700;color:#eee;padding-left:15px>”</div></div><div class="content-area markdown-body"><p>云原生最初来描述云上应用的典型架构与特性，随着容器、Kubernetes、Serverless、FaaS技术的演进，CNCF（云原生计算基金会）把云原生的概念更广泛地定义为“让应用更有弹性、容错性、观测性的基础技术，让应用更容易部署、管理的基础软件、让应用更容易编写、编排的运行框架等”，希望能够让开发者最好的利用云的资源、产品和交付能力。云上的资源具备多样性，并且有些硬件资源很难被 Kubernetes 管理。Kubernetes 提供 Extended Resources 和 Device Plugin 方案来实现异构资源的管理。</p><p>我在工作的过程中使用了 AMD 和 NVIDIA 显卡来开展 AI 任务，一些对性能要求更高的场景下使用了 FPGA 方案，例如ffmpeg、x264、x265 等音视频工具，亦或是高频交易需要模式识别等场景。在 Kubernetes 集群中运行 TensorFlow、PyTorch等机器学习框架需要用到 PCIe 设备。社区中的 Device Plugin 方案在学术界和工程界具有较大的差异，目前 Device Plugin 只能说是可以用的地步。</p><p>为什么需要用 Kubernetes 来管理 PCIe 设备（异构资源）呢？</p><ul><li>提升部署速度，通过 Docker、Podman 的方式加速部署不同类型或版本的环境。例如在私有镜像仓库中准备多个版本的 CUDA 镜像。</li><li>提升资源使用率，使用 Kubernetes 进行集中管理。遗憾的是 NVIDIA 提供的 Device Plugin 只能实现简单的 GPU 数量汇报。</li><li>资源独立，利用容器实现对异构设备的隔离性，避免相互影响。例如 NVIDIA 的多实例 GPU 可以实现一个 GPU 板卡可以承载多个 Pod。</li></ul><p><img src=../../article/kubernetes-device-plugin/1045756-cdna2-tech-1260x709.webp alt></p><h1 id=俯瞰-device-plugin>俯瞰 Device Plugin</h1><p>通常情况下安装 CUDA 的时候，会通过 CUDA Toolkit Installer 进行安装，这个安装器自带了 CUDA 和 GPU 驱动，但是不同的框架或应用可能使用不同的 CUDA 版本，这就导致 CUDA 版本与 GPU 驱动版本可能不匹配使得无法正常工作。通常来讲 GPU 提供了从硬件层面上的多实例，为了在不同实例上运行不同的 CUDA 版本，我们可以通过 mount bind 的方式（<code>--device=/dev/nvidia0</code>）构建容器镜像。在内核层面安装 GPU 驱动，然后在镜像内安装容器中的 GPU 驱动，将物理的 GPU 设备映射到容器中，如下图所示：</p><p><img src=../../article/kubernetes-device-plugin/gpu-containers.svg alt></p><p>NVIDIA GPU 需要替换 Docker 的 RunC，安装 nvidia-docker2 即可实现自动替换。AMD Instinct 的 ROCm 方案就不需要单独的 RunC。</p><p>Kubernetes Extended Resources 通过自定义资源扩展的方式，允许用户分配和使用不是 Kubernetes 中内建的资源，而 Device Plugin 允许第三方设备厂商以插件的方式对设备的调度和生命周期进行管控。Extended Resources 属于 Node 级别的 API，通过 <code>application/json-patch+json</code> 类型的 HTTP PATCH 请求可以上报资源数量，然后在 Pod YAML 中使用 <code>nvidia.com/gpu: 1</code> 进行声明。</p><p>如果使用 Device Plugin 框架，那么直接遵循框架的编程模型即可。Device Plugin 主要完成两件事情：</p><ul><li>异构资源的监控与上报</li><li>Pod 所需资源的分配</li></ul><p>目前 NVIDIA 提供的 Device Plugin 无法实现更加复杂的调度，例如 GPU 亲和性调度（调度到同一个 NUMA 节点上）、全局 GPU 调度、NV Link/NV Switch 识别等。</p><p><img src=../../article/kubernetes-device-plugin/device-plugin-flow.svg alt></p><p>Kubelet 中有 Device Plugin Manager，维护了当前 Node 上的设备，并且通知 Kubernetes API Server 资源的清单，Kubernetes API Server 主要的任务就是在 ETCD 中存储这些资源清单。Kubelet 启动以后会创建一个 DaemonSet，这个 DaemonSet 就是我们部署的 Device Plugin，这个 DaemonSet Pod 会向 Kubelet 中的 Device Plugin Manager 发送注册请求，主要做三件事情：汇报设备类型、通知 Unix Socket 位置与通知 API 版本和协议。</p><p>Kubelet 上的 Device Plugin Manager 会启动一个 Device Plugin Client 去通过得知的 Unix Socket 连接 DaemonSet Pod 中的 Device Plugin Server（本质是个 gRPC Server）实现 ListAndWatch API。这样 Node 上的设备数量变化就可以在 Kubernetes 上的 Extended Resource 数量上发生变化了。</p><p>现有的 Device Plugin 中，如果 Pod 想使用 GPU 资源，直接在 YAML 中这样声明：</p><div class=highlight><div style=color:#e2e4e5;background-color:#282a36;-moz-tab-size:4;-o-tab-size:4;tab-size:4><table style=border-spacing:0;padding:0;margin:0;border:0><tr><td style=vertical-align:top;padding:0;margin:0;border:0><pre tabindex=0 style=color:#e2e4e5;background-color:#282a36;-moz-tab-size:4;-o-tab-size:4;tab-size:4><code><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">1
+<!doctype html><html lang=zh><head><meta charset=utf-8><meta http-equiv=x-ua-compatible content="IE=edge"><meta name=viewport content="width=device-width,initial-scale=1"><title>Halo的主页 - Kubernetes Device Plugin 开发详解</title><link rel=stylesheet href=https://cdn.jsdelivr.net/npm/normalize.css@8.0.1/normalize.min.css><link rel=stylesheet href=https://cdnjs.cloudflare.com/ajax/libs/animate.css/4.1.1/animate.min.css><link rel=preconnect href=https://fonts.googleapis.com><link rel=preconnect href=https://fonts.gstatic.com crossorigin><link href="https://fonts.googleapis.com/css2?family=Fira+Code:wght@500&display=swap" rel=stylesheet><link rel=stylesheet href=../../css/halo.css><link rel=stylesheet href=../../css/github-markdown.css><link rel=stylesheet href=../../css/github-markdown-light.css><link rel=stylesheet href=../../css/markdown-rewrite.css><link rel="shortcut icon" href=favicon.ico type=image/x-icon><link rel=apple-touch-icon sizes=180x180 href=../../apple-touch-icon.png><link rel=icon type=image/png sizes=32x32 href=../../favicon-32x32.png><link rel=icon type=image/png sizes=16x16 href=../../favicon-16x16.png><link rel=manifest href=../../site.webmanifest><link rel=mask-icon href=../../safari-pinned-tab.svg color=#5bbad5><meta name=msapplication-TileColor content="#ffffff"><meta name=theme-color content="#ffffff"><style>body{display:flex;flex-direction:column;align-items:center}a{color:#5e5e5e;text-decoration:none}</style></head><body><div id=mob-warning>当前内容暂不适配移动端。<br>请使用桌面端查看。</div><div id=top style=width:0;height:0></div><div class=top-button><a href=#top style=text-decoration:none>Top</a></div><div id=toc>目<br>录</div><div id=header><div style=width:100%;display:flex;align-items:center;height:100%><div class=disable-select style=display:flex;justify-content:flex-end;font-size:14pt;font-weight:700;color:#555><div style=margin-right:35px></div><div><a style=color:#555;text-decoration:none href=../../>&lt;Halo的主页/></a></div></div><div style=flex:1;display:flex;justify-content:flex-end;font-size:14pt;font-weight:700;color:#555><div style=margin-right:45px><a href=https://www.wecomz.com style=color:#555;text-decoration:none>WecomZ</a></div><div style=margin-right:45px><a href=../../article style=color:#555;text-decoration:none>文章</a></div><div style=margin-right:45px><a href=../../video style=color:#555;text-decoration:none>视频</a></div><div style=margin-right:45px><a href=../../about style=color:#555;text-decoration:none>关于</a></div><div style=margin-left:35px></div></div></div></div><div id=article-content><div class=content-header><div>《Kubernetes Device Plugin 开发详解》</div><div style=font-size:10pt;height:100%;display:flex;align-items:flex-end;padding-bottom:12pt;color:#5e5e5e;font-weight:lighter>在2023/07/30 16:49:46更新，大约共2600字。</div></div><div class=content-desc><div style=font-size:50pt;font-weight:700;color:#eee;padding-right:15px>“</div><div style=line-height:50pt;color:#9b9b9b>学习 Device Plugin 开发</div><div style=font-size:50pt;font-weight:700;color:#eee;padding-left:15px>”</div></div><div class="content-area markdown-body"><p>云原生最初来描述云上应用的典型架构与特性，随着容器、Kubernetes、Serverless、FaaS技术的演进，CNCF（云原生计算基金会）把云原生的概念更广泛地定义为“让应用更有弹性、容错性、观测性的基础技术，让应用更容易部署、管理的基础软件、让应用更容易编写、编排的运行框架等”，希望能够让开发者最好的利用云的资源、产品和交付能力。云上的资源具备多样性，并且有些硬件资源很难被 Kubernetes 管理。Kubernetes 提供 Extended Resources 和 Device Plugin 方案来实现异构资源的管理。</p><p>我在工作的过程中使用了 AMD 和 NVIDIA 显卡来开展 AI 任务，一些对性能要求更高的场景下使用了 FPGA 方案，例如ffmpeg、x264、x265 等音视频工具，亦或是高频交易需要模式识别等场景。在 Kubernetes 集群中运行 TensorFlow、PyTorch等机器学习框架需要用到 PCIe 设备。社区中的 Device Plugin 方案在学术界和工程界具有较大的差异，目前 Device Plugin 只能说是可以用的地步。</p><p>为什么需要用 Kubernetes 来管理 PCIe 设备（异构资源）呢？</p><ul><li>提升部署速度，通过 Docker、Podman 的方式加速部署不同类型或版本的环境。例如在私有镜像仓库中准备多个版本的 CUDA 镜像。</li><li>提升资源使用率，使用 Kubernetes 进行集中管理。遗憾的是 NVIDIA 提供的 Device Plugin 只能实现简单的 GPU 数量汇报。</li><li>资源独立，利用容器实现对异构设备的隔离性，避免相互影响。例如 NVIDIA 的多实例 GPU 可以实现一个 GPU 板卡可以承载多个 Pod。</li></ul><p><img src=../../article/kubernetes-device-plugin/1045756-cdna2-tech-1260x709.webp alt></p><h1 id=俯瞰-device-plugin>俯瞰 Device Plugin</h1><p>通常情况下安装 CUDA 的时候，会通过 CUDA Toolkit Installer 进行安装，这个安装器自带了 CUDA 和 GPU 驱动，但是不同的框架或应用可能使用不同的 CUDA 版本，这就导致 CUDA 版本与 GPU 驱动版本可能不匹配使得无法正常工作。通常来讲 GPU 提供了从硬件层面上的多实例，为了在不同实例上运行不同的 CUDA 版本，我们可以通过 mount bind 的方式（<code>--device=/dev/nvidia0</code>）构建容器镜像。在内核层面安装 GPU 驱动，然后在镜像内安装容器中的 GPU 驱动，将物理的 GPU 设备映射到容器中，如下图所示：</p><p><img src=../../article/kubernetes-device-plugin/gpu-containers.svg alt></p><p>NVIDIA GPU 需要替换 Docker 的 RunC，安装 nvidia-docker2 即可实现自动替换。AMD Instinct 的 ROCm 方案就不需要单独的 RunC。</p><p>Kubernetes Extended Resources 通过自定义资源扩展的方式，允许用户分配和使用不是 Kubernetes 中内建的资源，而 Device Plugin 允许第三方设备厂商以插件的方式对设备的调度和生命周期进行管控。Extended Resources 属于 Node 级别的 API，通过 <code>application/json-patch+json</code> 类型的 HTTP PATCH 请求可以上报资源数量，然后在 Pod YAML 中使用 <code>nvidia.com/gpu: 1</code> 进行声明。</p><p>如果使用 Device Plugin 框架，那么直接遵循框架的编程模型即可。Device Plugin 主要完成两件事情：</p><ul><li>异构资源的监控与上报</li><li>Pod 所需资源的分配</li></ul><p>目前 NVIDIA 提供的 Device Plugin 无法实现更加复杂的调度，例如 GPU 亲和性调度（调度到同一个 NUMA 节点上）、全局 GPU 调度、NV Link/NV Switch 识别等。</p><p><img src=../../article/kubernetes-device-plugin/device-plugin-flow.svg alt></p><p>Kubelet 中有 Device Plugin Manager，维护了当前 Node 上的设备，并且通知 Kubernetes API Server 资源的清单，Kubernetes API Server 主要的任务就是在 ETCD 中存储这些资源清单。Kubelet 启动以后会创建一个 DaemonSet，这个 DaemonSet 就是我们部署的 Device Plugin，这个 DaemonSet Pod 会向 Kubelet 中的 Device Plugin Manager 发送注册请求，主要做三件事情：汇报设备类型、通知 Unix Socket 位置与通知 API 版本和协议。</p><p>Kubelet 上的 Device Plugin Manager 会启动一个 Device Plugin Client 去通过得知的 Unix Socket 连接 DaemonSet Pod 中的 Device Plugin Server（本质是个 gRPC Server）实现 ListAndWatch API。这样 Node 上的设备数量变化就可以在 Kubernetes 上的 Extended Resource 数量上发生变化了。</p><p>现有的 Device Plugin 中，如果 Pod 想使用 GPU 资源，直接在 YAML 中这样声明：</p><div class=highlight><div style=color:#e2e4e5;background-color:#282a36;-moz-tab-size:4;-o-tab-size:4;tab-size:4><table style=border-spacing:0;padding:0;margin:0;border:0><tr><td style=vertical-align:top;padding:0;margin:0;border:0><pre tabindex=0 style=color:#e2e4e5;background-color:#282a36;-moz-tab-size:4;-o-tab-size:4;tab-size:4><code><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">1
 </span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">2
 </span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">3
 </span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">4
@@ -510,4 +510,469 @@ NewManagerImpl() 函数的唯一用途就是判断系统平台以确定合适的
 </span></span><span style=display:flex><span>	sync.RWMutex
 </span></span><span style=display:flex><span>	devs <span style=color:#ff5c57>map</span>[<span style=color:#9aedfe>string</span>]containerDevices <span style=color:#78787e>// Keyed by podUID.
 </span></span></span><span style=display:flex><span><span style=color:#78787e></span>}
-</span></span></code></pre></td></tr></table></div></div><h1 id=从-mellanox-rdma-的-device-plugin-学习>从 Mellanox RDMA 的 Device Plugin 学习</h1></div></div><footer id=footer><div class=footer-inner><div><div style=font-weight:700;margin-bottom:15px>发布地址</div><div><a href=https://halo.wecomz.com>Halo的主页</a></div><div><a href=https://bluemiaomiao.gitee.io>中国境内镜像</a></div><div><a href=https://bluemiaomiao.github.io>中国境外镜像</a></div></div><div><div style=font-weight:700;margin-bottom:15px>友情链接</div><div><a href=https://debuginn.cn>DebugInn</a></div><div><a href=https://blog.csdn.net/qq_43442524>普通Gopher</a></div></div><div><div style=font-weight:700;margin-bottom:15px>开源软件</div><div><a href=https://bluemiaomiao.github.io/libsshd/>OpenSSH Configuration Library</a></div><div><a href=https://bluemiaomiao.github.io/fastdfs-spring-boot-starter/>FastDFS SpringBoot Starter</a></div><div><a href=https://bluemiaomiao.github.io/librocm-smi-gobinding/>AMD ROCm SMI for Golang</a></div><div><a href=https://bluemiaomiao.github.io/libnvml-smi-gobinding>NVIDIA NVML SMI for Golang</a></div><div><a href=https://www.wecomz.com/software/zgraphics>zGraphics(Prometheus GPU Exporter)</a></div><div><a href=https://www.wecomz.com/software/ztrader>zTrader Framework</a></div></div><div><div style=font-weight:700;margin-bottom:15px>其他</div><div><a href=https://values.wecomz.com>WecomZ 价值观</a></div></div></div><div class=icp><div style=min-height:13px;min-width:13px;background-image:url(/image/beian.png);background-repeat:no-repeat;background-size:contain;margin-right:5px></div><div><a href=https://beian.miit.gov.cn target=_blank>鲁ICP备2023019133号</a></div></div></footer></body><script src=../../js/halo.js type=text/javascript></script></html>
+</span></span></code></pre></td></tr></table></div></div><p>我们在这个小结了解了 Device Plugin 在 Kubelet 层面的实现，接下来看看第三方厂商视角下的 Device Plugin。</p><h1 id=从-mellanox-rdma-的-device-plugin-学习>从 Mellanox RDMA 的 Device Plugin 学习</h1><p>Mellanox Technologies（纳斯达克： MLNX ）是一家在全球范围内为服务器和存储提供端到端Infiniband和以太网互联解决方案的领军企业。
+Mellanox 互连解决方案通过低延迟、高吞吐量的强大性能，可以极大的提升数据中心效率，在应用和系统之间快速的传递数据。</p><blockquote><p>InfiniBand是一种网络通信协议，它在处理器节点之间以及处理器节点和输入/输出节点（如磁盘或存储器）之间提供基于交换机的点到点双向串行链路结构（Fabric）。</p><p>InfiniBand通过交换机在节点之间直接创建一个专用的受保护通道，并通过InfiniBand适配器管理和执行的远程直接内存访问（RDMA）和发送/接收卸载，方便了数据和消息的移动。 InfiniBand技术包括 SRD、DDR、QDR、FDR、EDR、HDR 和NDR等多种数据传输速率。InfiniBand最重要的一个特点就是高带宽、低延迟，应用于计算机与计算机之间的数据互连。</p></blockquote><p>以上是 Microsoft Bing Chat 对Mellanox的介绍。Mellanox 提供了两种 Device Plugin，一种是 k8s-rdma-sriov-dev-plugin，已经过时；还有一种是 <a href=https://github.com/mellanox/k8s-rdma-shared-dev-plugin>k8s-rdma-shared-dev-plugin</a>。</p><p>我们将代码 Clone 到本地，然后使用 Goland 打开：</p><div class=highlight><div style=color:#e2e4e5;background-color:#282a36;-moz-tab-size:4;-o-tab-size:4;tab-size:4><table style=border-spacing:0;padding:0;margin:0;border:0><tr><td style=vertical-align:top;padding:0;margin:0;border:0><pre tabindex=0 style=color:#e2e4e5;background-color:#282a36;-moz-tab-size:4;-o-tab-size:4;tab-size:4><code><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">1
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">2
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">3
+</span></code></pre></td><td style=vertical-align:top;padding:0;margin:0;border:0;width:100%><pre tabindex=0 style=color:#e2e4e5;background-color:#282a36;-moz-tab-size:4;-o-tab-size:4;tab-size:4><code class=language-shell data-lang=shell><span style=display:flex><span>git clone https://github.com/Mellanox/k8s-rdma-shared-dev-plugin.git
+</span></span><span style=display:flex><span><span style=color:#ff5c57>cd</span> k8s-rdma-shared-dev-plugin
+</span></span><span style=display:flex><span>go mod download
+</span></span></code></pre></td></tr></table></div></div><p>单纯去实现 Device Plugin 是比较简单的，难的是让 Kubernetes 具备宏观调度能力，而不是局限到某个 Node 视角上。项目结构如下：</p><div class=highlight><div style=color:#e2e4e5;background-color:#282a36;-moz-tab-size:4;-o-tab-size:4;tab-size:4><table style=border-spacing:0;padding:0;margin:0;border:0><tr><td style=vertical-align:top;padding:0;margin:0;border:0><pre tabindex=0 style=color:#e2e4e5;background-color:#282a36;-moz-tab-size:4;-o-tab-size:4;tab-size:4><code><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 1
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 2
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 3
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 4
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 5
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 6
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 7
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 8
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 9
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">10
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">11
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">12
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">13
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">14
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">15
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">16
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">17
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">18
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">19
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">20
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">21
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">22
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">23
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">24
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">25
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">26
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">27
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">28
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">29
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">30
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">31
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">32
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">33
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">34
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">35
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">36
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">37
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">38
+</span></code></pre></td><td style=vertical-align:top;padding:0;margin:0;border:0;width:100%><pre tabindex=0 style=color:#e2e4e5;background-color:#282a36;-moz-tab-size:4;-o-tab-size:4;tab-size:4><code class=language-shell data-lang=shell><span style=display:flex><span><span style=color:#78787e># tree | grep -Ev &#34;*test*&#34; 的执行结果</span>
+</span></span><span style=display:flex><span>.
+</span></span><span style=display:flex><span>├── Dockerfile
+</span></span><span style=display:flex><span>├── Dockerfile.ubi
+</span></span><span style=display:flex><span>├── LICENSE
+</span></span><span style=display:flex><span>├── Makefile
+</span></span><span style=display:flex><span>├── README.md
+</span></span><span style=display:flex><span>├── cmd
+</span></span><span style=display:flex><span>│   └── k8s-rdma-shared-dp
+</span></span><span style=display:flex><span>│       └── main.go
+</span></span><span style=display:flex><span>├── example
+</span></span><span style=display:flex><span>├── go.mod
+</span></span><span style=display:flex><span>├── go.sum
+</span></span><span style=display:flex><span>├── images
+</span></span><span style=display:flex><span>│   ├── k8s-rdma-shared-dev-plugin-config-map.yaml
+</span></span><span style=display:flex><span>│   ├── k8s-rdma-shared-dev-plugin-ds-pre-1.16.yaml
+</span></span><span style=display:flex><span>│   └── k8s-rdma-shared-dev-plugin-ds.yaml
+</span></span><span style=display:flex><span>├── pkg
+</span></span><span style=display:flex><span>│   ├── resources
+</span></span><span style=display:flex><span>│   │   ├── device_selectors.go
+</span></span><span style=display:flex><span>│   │   ├── netlink_manager.go
+</span></span><span style=display:flex><span>│   │   ├── pci_net_device.go
+</span></span><span style=display:flex><span>│   │   ├── rdma_device_spec.go
+</span></span><span style=display:flex><span>│   │   ├── resources_manager.go
+</span></span><span style=display:flex><span>│   │   ├── server.go
+</span></span><span style=display:flex><span>│   │   ├── watcher.go
+</span></span><span style=display:flex><span>│   ├── types
+</span></span><span style=display:flex><span>│   │   ├── mocks
+</span></span><span style=display:flex><span>│   │   │   ├── NetlinkManager.go
+</span></span><span style=display:flex><span>│   │   │   ├── PciNetDevice.go
+</span></span><span style=display:flex><span>│   │   │   ├── RdmaDeviceSpec.go
+</span></span><span style=display:flex><span>│   │   │   ├── ResourceServer.go
+</span></span><span style=display:flex><span>│   │   │   └── ResourceServerConnector.go
+</span></span><span style=display:flex><span>│   │   └── types.go
+</span></span><span style=display:flex><span>│   └── utils
+</span></span><span style=display:flex><span>│       └── utils.go
+</span></span><span style=display:flex><span>└── scripts
+</span></span><span style=display:flex><span>    └── deploy.sh
+</span></span></code></pre></td></tr></table></div></div><p>我们可以观察到二进制文件的入口就是 <code>cmd/k8s-rdma-shared-dp/main.go</code> 文件，主要函数就是 main() 函数，简化后的内容为：</p><div class=highlight><div style=color:#e2e4e5;background-color:#282a36;-moz-tab-size:4;-o-tab-size:4;tab-size:4><table style=border-spacing:0;padding:0;margin:0;border:0><tr><td style=vertical-align:top;padding:0;margin:0;border:0><pre tabindex=0 style=color:#e2e4e5;background-color:#282a36;-moz-tab-size:4;-o-tab-size:4;tab-size:4><code><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 1
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 2
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 3
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 4
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 5
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 6
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 7
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 8
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 9
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">10
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">11
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">12
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">13
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">14
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">15
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">16
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">17
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">18
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">19
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">20
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">21
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">22
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">23
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">24
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">25
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">26
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">27
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">28
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">29
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">30
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">31
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">32
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">33
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">34
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">35
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">36
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">37
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">38
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">39
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">40
+</span></code></pre></td><td style=vertical-align:top;padding:0;margin:0;border:0;width:100%><pre tabindex=0 style=color:#e2e4e5;background-color:#282a36;-moz-tab-size:4;-o-tab-size:4;tab-size:4><code class=language-go data-lang=go><span style=display:flex><span><span style=color:#ff5c57>func</span> <span style=color:#57c7ff>main</span>() {
+</span></span><span style=display:flex><span>	<span style=color:#ff6ac1>...</span>
+</span></span><span style=display:flex><span>	rm <span style=color:#ff6ac1>:=</span> resources.<span style=color:#57c7ff>NewResourceManager</span>()
+</span></span><span style=display:flex><span>	<span style=color:#ff6ac1>...</span>
+</span></span><span style=display:flex><span>	<span style=color:#ff6ac1>if</span> err <span style=color:#ff6ac1>:=</span> rm.<span style=color:#57c7ff>ValidateConfigs</span>(); err <span style=color:#ff6ac1>!=</span> <span style=color:#ff6ac1>nil</span> {
+</span></span><span style=display:flex><span>		<span style=color:#ff6ac1>...</span>
+</span></span><span style=display:flex><span>	}
+</span></span><span style=display:flex><span>
+</span></span><span style=display:flex><span>	<span style=color:#ff6ac1>if</span> err <span style=color:#ff6ac1>:=</span> rm.<span style=color:#57c7ff>ValidateRdmaSystemMode</span>(); err <span style=color:#ff6ac1>!=</span> <span style=color:#ff6ac1>nil</span> {
+</span></span><span style=display:flex><span>		<span style=color:#ff6ac1>...</span>
+</span></span><span style=display:flex><span>	}
+</span></span><span style=display:flex><span>
+</span></span><span style=display:flex><span>	<span style=color:#ff6ac1>if</span> err <span style=color:#ff6ac1>:=</span> rm.<span style=color:#57c7ff>DiscoverHostDevices</span>(); err <span style=color:#ff6ac1>!=</span> <span style=color:#ff6ac1>nil</span> {
+</span></span><span style=display:flex><span>		<span style=color:#ff6ac1>...</span>
+</span></span><span style=display:flex><span>	}
+</span></span><span style=display:flex><span>
+</span></span><span style=display:flex><span>	<span style=color:#ff6ac1>if</span> err <span style=color:#ff6ac1>:=</span> rm.<span style=color:#57c7ff>InitServers</span>(); err <span style=color:#ff6ac1>!=</span> <span style=color:#ff6ac1>nil</span> {
+</span></span><span style=display:flex><span>		<span style=color:#ff6ac1>...</span>
+</span></span><span style=display:flex><span>	}
+</span></span><span style=display:flex><span>
+</span></span><span style=display:flex><span>	<span style=color:#ff6ac1>if</span> err <span style=color:#ff6ac1>:=</span> rm.<span style=color:#57c7ff>StartAllServers</span>(); err <span style=color:#ff6ac1>!=</span> <span style=color:#ff6ac1>nil</span> {
+</span></span><span style=display:flex><span>		<span style=color:#ff6ac1>...</span>
+</span></span><span style=display:flex><span>	}
+</span></span><span style=display:flex><span>	stopPeriodicUpdate <span style=color:#ff6ac1>:=</span> rm.<span style=color:#57c7ff>PeriodicUpdate</span>()
+</span></span><span style=display:flex><span>
+</span></span><span style=display:flex><span>	signalsNotifier <span style=color:#ff6ac1>:=</span> resources.<span style=color:#57c7ff>NewSignalNotifier</span>(syscall.SIGHUP, syscall.SIGINT, syscall.SIGTERM, syscall.SIGQUIT)
+</span></span><span style=display:flex><span>	sigs <span style=color:#ff6ac1>:=</span> signalsNotifier.<span style=color:#57c7ff>Notify</span>()
+</span></span><span style=display:flex><span>
+</span></span><span style=display:flex><span>	s <span style=color:#ff6ac1>:=</span> <span style=color:#ff6ac1>&lt;-</span>sigs
+</span></span><span style=display:flex><span>	<span style=color:#ff6ac1>switch</span> s {
+</span></span><span style=display:flex><span>	<span style=color:#ff6ac1>case</span> syscall.SIGHUP:
+</span></span><span style=display:flex><span>		<span style=color:#ff6ac1>if</span> err <span style=color:#ff6ac1>:=</span> rm.<span style=color:#57c7ff>RestartAllServers</span>(); err <span style=color:#ff6ac1>!=</span> <span style=color:#ff6ac1>nil</span> {
+</span></span><span style=display:flex><span>			<span style=color:#ff6ac1>...</span>
+</span></span><span style=display:flex><span>		}
+</span></span><span style=display:flex><span>	<span style=color:#ff6ac1>default</span>:
+</span></span><span style=display:flex><span>		<span style=color:#57c7ff>stopPeriodicUpdate</span>()
+</span></span><span style=display:flex><span>		_ = rm.<span style=color:#57c7ff>StopAllServers</span>()
+</span></span><span style=display:flex><span>		<span style=color:#ff6ac1>return</span>
+</span></span><span style=display:flex><span>	}
+</span></span><span style=display:flex><span>}
+</span></span></code></pre></td></tr></table></div></div><p>我们来一一分析 main() 函数中主要做了什么事情。首先通过 NewResourceManager() 工厂函数创建了一个 ResourceManager 对象，它持有这些数据：</p><div class=highlight><div style=color:#e2e4e5;background-color:#282a36;-moz-tab-size:4;-o-tab-size:4;tab-size:4><table style=border-spacing:0;padding:0;margin:0;border:0><tr><td style=vertical-align:top;padding:0;margin:0;border:0><pre tabindex=0 style=color:#e2e4e5;background-color:#282a36;-moz-tab-size:4;-o-tab-size:4;tab-size:4><code><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 1
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 2
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 3
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 4
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 5
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 6
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 7
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 8
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 9
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">10
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">11
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">12
+</span></code></pre></td><td style=vertical-align:top;padding:0;margin:0;border:0;width:100%><pre tabindex=0 style=color:#e2e4e5;background-color:#282a36;-moz-tab-size:4;-o-tab-size:4;tab-size:4><code class=language-go data-lang=go><span style=display:flex><span><span style=color:#ff5c57>type</span> resourceManager <span style=color:#ff5c57>struct</span> {
+</span></span><span style=display:flex><span>	configFile             <span style=color:#9aedfe>string</span>
+</span></span><span style=display:flex><span>	defaultResourcePrefix  <span style=color:#9aedfe>string</span>
+</span></span><span style=display:flex><span>	socketSuffix           <span style=color:#9aedfe>string</span>
+</span></span><span style=display:flex><span>	watchMode              <span style=color:#9aedfe>bool</span>
+</span></span><span style=display:flex><span>	configList             []<span style=color:#ff6ac1>*</span>types.UserConfig
+</span></span><span style=display:flex><span>	resourceServers        []types.ResourceServer
+</span></span><span style=display:flex><span>	deviceList             []<span style=color:#ff6ac1>*</span>ghw.PCIDevice
+</span></span><span style=display:flex><span>	netlinkManager         types.NetlinkManager
+</span></span><span style=display:flex><span>	rds                    types.RdmaDeviceSpec
+</span></span><span style=display:flex><span>	PeriodicUpdateInterval time.Duration
+</span></span><span style=display:flex><span>}
+</span></span></code></pre></td></tr></table></div></div><p>这个结构体上有以下这些方法：</p><ul><li><code>ReadConfig()</code>：读取配置</li><li><code>ValidateConfigs()</code>：验证配置</li><li><code>ValidateRdmaSystemMode()</code>：确保RDMA子系统网络命名空间模式是共享的</li><li><code>InitServers()</code>：初始化服务器</li><li><code>StartAllServers()</code>：启动全部的服务器</li><li><code>StopAllServers()</code>：停止全部的服务器</li><li><code>RestartAllServers()</code>：重启全部的服务器</li><li><code>DiscoverHostDevices()</code>：发现主机设备</li><li><code>GetDevices()</code>：获取设备</li><li><code>GetFilteredDevices()</code>：获取被过滤的设备</li><li><code>PeriodicUpdate()</code>：定期更新</li></ul><p>这些方法都在 <code>pkg/types.go</code> 中进行了描述：</p><div class=highlight><div style=color:#e2e4e5;background-color:#282a36;-moz-tab-size:4;-o-tab-size:4;tab-size:4><table style=border-spacing:0;padding:0;margin:0;border:0><tr><td style=vertical-align:top;padding:0;margin:0;border:0><pre tabindex=0 style=color:#e2e4e5;background-color:#282a36;-moz-tab-size:4;-o-tab-size:4;tab-size:4><code><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 1
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 2
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 3
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 4
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 5
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 6
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 7
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 8
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 9
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">10
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">11
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">12
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">13
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">14
+</span></code></pre></td><td style=vertical-align:top;padding:0;margin:0;border:0;width:100%><pre tabindex=0 style=color:#e2e4e5;background-color:#282a36;-moz-tab-size:4;-o-tab-size:4;tab-size:4><code class=language-go data-lang=go><span style=display:flex><span><span style=color:#78787e>// ResourceManager manger multi plugins
+</span></span></span><span style=display:flex><span><span style=color:#78787e></span><span style=color:#ff5c57>type</span> ResourceManager <span style=color:#ff5c57>interface</span> {
+</span></span><span style=display:flex><span>	<span style=color:#57c7ff>ReadConfig</span>() <span style=color:#9aedfe>error</span>
+</span></span><span style=display:flex><span>	<span style=color:#57c7ff>ValidateConfigs</span>() <span style=color:#9aedfe>error</span>
+</span></span><span style=display:flex><span>	<span style=color:#57c7ff>ValidateRdmaSystemMode</span>() <span style=color:#9aedfe>error</span>
+</span></span><span style=display:flex><span>	<span style=color:#57c7ff>DiscoverHostDevices</span>() <span style=color:#9aedfe>error</span>
+</span></span><span style=display:flex><span>	<span style=color:#57c7ff>GetDevices</span>() []PciNetDevice
+</span></span><span style=display:flex><span>	<span style=color:#57c7ff>InitServers</span>() <span style=color:#9aedfe>error</span>
+</span></span><span style=display:flex><span>	<span style=color:#57c7ff>StartAllServers</span>() <span style=color:#9aedfe>error</span>
+</span></span><span style=display:flex><span>	<span style=color:#57c7ff>StopAllServers</span>() <span style=color:#9aedfe>error</span>
+</span></span><span style=display:flex><span>	<span style=color:#57c7ff>RestartAllServers</span>() <span style=color:#9aedfe>error</span>
+</span></span><span style=display:flex><span>	<span style=color:#57c7ff>GetFilteredDevices</span>(devices []PciNetDevice, selector <span style=color:#ff6ac1>*</span>Selectors) []PciNetDevice
+</span></span><span style=display:flex><span>	<span style=color:#57c7ff>PeriodicUpdate</span>() <span style=color:#ff5c57>func</span>()
+</span></span><span style=display:flex><span>}
+</span></span></code></pre></td></tr></table></div></div><p>所有 resourceManager 实际上是 ResourceManager 接口的实现类，上面列出的方法会被 main() 函数逐一调用。</p><p>首先是通过 ReadConfig() 方法读取配置后传递给 ValidateConfigs() 方法进行验证，如果验证失败就会抛出错误日志。
+ValidateRdmaSystemMode() 方法调用了 RdmaSystemGetNetnsMode() 方法，这个方法来自 <code>"github.com/vishvananda/netlink</code> 包，我们先不去管具体做了什么事情。
+接下来是 DiscoverHostDevices() 方法被调用，应该是枚举 PCIe 总线上的设备并添加到 ResourceManager 上：</p><div class=highlight><div style=color:#e2e4e5;background-color:#282a36;-moz-tab-size:4;-o-tab-size:4;tab-size:4><table style=border-spacing:0;padding:0;margin:0;border:0><tr><td style=vertical-align:top;padding:0;margin:0;border:0><pre tabindex=0 style=color:#e2e4e5;background-color:#282a36;-moz-tab-size:4;-o-tab-size:4;tab-size:4><code><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 1
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 2
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 3
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 4
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 5
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 6
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 7
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 8
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 9
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">10
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">11
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">12
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">13
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">14
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">15
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">16
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">17
+</span></code></pre></td><td style=vertical-align:top;padding:0;margin:0;border:0;width:100%><pre tabindex=0 style=color:#e2e4e5;background-color:#282a36;-moz-tab-size:4;-o-tab-size:4;tab-size:4><code class=language-go data-lang=go><span style=display:flex><span><span style=color:#ff5c57>func</span> (rm <span style=color:#ff6ac1>*</span>resourceManager) <span style=color:#57c7ff>DiscoverHostDevices</span>() <span style=color:#9aedfe>error</span> {
+</span></span><span style=display:flex><span>	pci, err <span style=color:#ff6ac1>:=</span> ghw.<span style=color:#57c7ff>PCI</span>()
+</span></span><span style=display:flex><span>	<span style=color:#ff6ac1>...</span>
+</span></span><span style=display:flex><span>	devices <span style=color:#ff6ac1>:=</span> pci.<span style=color:#57c7ff>ListDevices</span>()
+</span></span><span style=display:flex><span>	<span style=color:#ff6ac1>if</span> <span style=color:#ff5c57>len</span>(devices) <span style=color:#ff6ac1>==</span> <span style=color:#ff9f43>0</span> {
+</span></span><span style=display:flex><span>		log.<span style=color:#57c7ff>Println</span>(<span style=color:#5af78e>&#34;Warning: DiscoverHostDevices(): no PCI network device found&#34;</span>)
+</span></span><span style=display:flex><span>	}
+</span></span><span style=display:flex><span>
+</span></span><span style=display:flex><span>	rm.deviceList = []<span style=color:#ff6ac1>*</span>ghw.PCIDevice{}
+</span></span><span style=display:flex><span>
+</span></span><span style=display:flex><span>	<span style=color:#ff6ac1>for</span> _, device <span style=color:#ff6ac1>:=</span> <span style=color:#ff6ac1>range</span> devices {
+</span></span><span style=display:flex><span>		<span style=color:#ff6ac1>...</span>
+</span></span><span style=display:flex><span>		rm.deviceList = <span style=color:#ff5c57>append</span>(rm.deviceList, device)
+</span></span><span style=display:flex><span>	}
+</span></span><span style=display:flex><span>
+</span></span><span style=display:flex><span>	<span style=color:#ff6ac1>return</span> <span style=color:#ff6ac1>nil</span>
+</span></span><span style=display:flex><span>}
+</span></span></code></pre></td></tr></table></div></div><p>然后紧接着就调用了 InitServers() 进行服务器初始化操作，核心在于通过 newResourceServer() 方法创建资源服务器：</p><div class=highlight><div style=color:#e2e4e5;background-color:#282a36;-moz-tab-size:4;-o-tab-size:4;tab-size:4><table style=border-spacing:0;padding:0;margin:0;border:0><tr><td style=vertical-align:top;padding:0;margin:0;border:0><pre tabindex=0 style=color:#e2e4e5;background-color:#282a36;-moz-tab-size:4;-o-tab-size:4;tab-size:4><code><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 1
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 2
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 3
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 4
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 5
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 6
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 7
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 8
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 9
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">10
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">11
+</span></code></pre></td><td style=vertical-align:top;padding:0;margin:0;border:0;width:100%><pre tabindex=0 style=color:#e2e4e5;background-color:#282a36;-moz-tab-size:4;-o-tab-size:4;tab-size:4><code class=language-go data-lang=go><span style=display:flex><span><span style=color:#ff5c57>func</span> (rm <span style=color:#ff6ac1>*</span>resourceManager) <span style=color:#57c7ff>InitServers</span>() <span style=color:#9aedfe>error</span> {
+</span></span><span style=display:flex><span>	<span style=color:#ff6ac1>for</span> _, config <span style=color:#ff6ac1>:=</span> <span style=color:#ff6ac1>range</span> rm.configList {
+</span></span><span style=display:flex><span>		<span style=color:#ff6ac1>...</span>
+</span></span><span style=display:flex><span>		rs, err <span style=color:#ff6ac1>:=</span> <span style=color:#57c7ff>newResourceServer</span>(config, filteredDevices, rm.watchMode, rm.socketSuffix)
+</span></span><span style=display:flex><span>		<span style=color:#ff6ac1>if</span> err <span style=color:#ff6ac1>!=</span> <span style=color:#ff6ac1>nil</span> {
+</span></span><span style=display:flex><span>			<span style=color:#ff6ac1>return</span> err
+</span></span><span style=display:flex><span>		}
+</span></span><span style=display:flex><span>		rm.resourceServers = <span style=color:#ff5c57>append</span>(rm.resourceServers, rs)
+</span></span><span style=display:flex><span>	}
+</span></span><span style=display:flex><span>	<span style=color:#ff6ac1>return</span> <span style=color:#ff6ac1>nil</span>
+</span></span><span style=display:flex><span>}
+</span></span></code></pre></td></tr></table></div></div><p>newResourceServer() 方法是 resourceServer 结构体的工厂函数，resourceServer 实现了 <code>pkg/types/types.go</code> 中的 ResourceServer 接口：</p><div class=highlight><div style=color:#e2e4e5;background-color:#282a36;-moz-tab-size:4;-o-tab-size:4;tab-size:4><table style=border-spacing:0;padding:0;margin:0;border:0><tr><td style=vertical-align:top;padding:0;margin:0;border:0><pre tabindex=0 style=color:#e2e4e5;background-color:#282a36;-moz-tab-size:4;-o-tab-size:4;tab-size:4><code><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">1
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">2
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">3
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">4
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">5
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">6
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">7
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">8
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">9
+</span></code></pre></td><td style=vertical-align:top;padding:0;margin:0;border:0;width:100%><pre tabindex=0 style=color:#e2e4e5;background-color:#282a36;-moz-tab-size:4;-o-tab-size:4;tab-size:4><code class=language-go data-lang=go><span style=display:flex><span><span style=color:#78787e>// ResourceServer is gRPC server implements K8s device plugin api
+</span></span></span><span style=display:flex><span><span style=color:#78787e></span><span style=color:#ff5c57>type</span> ResourceServer <span style=color:#ff5c57>interface</span> {
+</span></span><span style=display:flex><span>	pluginapi.DevicePluginServer
+</span></span><span style=display:flex><span>	<span style=color:#57c7ff>Start</span>() <span style=color:#9aedfe>error</span>
+</span></span><span style=display:flex><span>	<span style=color:#57c7ff>Stop</span>() <span style=color:#9aedfe>error</span>
+</span></span><span style=display:flex><span>	<span style=color:#57c7ff>Restart</span>() <span style=color:#9aedfe>error</span>
+</span></span><span style=display:flex><span>	<span style=color:#57c7ff>Watch</span>()
+</span></span><span style=display:flex><span>	<span style=color:#57c7ff>UpdateDevices</span>([]PciNetDevice)
+</span></span><span style=display:flex><span>}
+</span></span></code></pre></td></tr></table></div></div><p>ResourceServer 是一个 gRPC 服务器，实现了 Kubbernetes 的 Device Plugin API，也就是 <code>pkg/apis/deviceplugin/v1beta1/api.pb.go</code> 定义的内容。
+初始化完成之后就是调用 StartAllServers() 方法启动服务器了，调用了 resourceServers 的 Start() 方法：</p><div class=highlight><div style=color:#e2e4e5;background-color:#282a36;-moz-tab-size:4;-o-tab-size:4;tab-size:4><table style=border-spacing:0;padding:0;margin:0;border:0><tr><td style=vertical-align:top;padding:0;margin:0;border:0><pre tabindex=0 style=color:#e2e4e5;background-color:#282a36;-moz-tab-size:4;-o-tab-size:4;tab-size:4><code><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 1
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 2
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 3
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 4
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 5
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 6
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 7
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 8
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 9
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">10
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">11
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">12
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">13
+</span></code></pre></td><td style=vertical-align:top;padding:0;margin:0;border:0;width:100%><pre tabindex=0 style=color:#e2e4e5;background-color:#282a36;-moz-tab-size:4;-o-tab-size:4;tab-size:4><code class=language-go data-lang=go><span style=display:flex><span><span style=color:#ff5c57>func</span> (rm <span style=color:#ff6ac1>*</span>resourceManager) <span style=color:#57c7ff>StartAllServers</span>() <span style=color:#9aedfe>error</span> {
+</span></span><span style=display:flex><span>	<span style=color:#ff6ac1>for</span> _, rs <span style=color:#ff6ac1>:=</span> <span style=color:#ff6ac1>range</span> rm.resourceServers {
+</span></span><span style=display:flex><span>		<span style=color:#ff6ac1>if</span> err <span style=color:#ff6ac1>:=</span> rs.<span style=color:#57c7ff>Start</span>(); err <span style=color:#ff6ac1>!=</span> <span style=color:#ff6ac1>nil</span> {
+</span></span><span style=display:flex><span>			<span style=color:#ff6ac1>return</span> err
+</span></span><span style=display:flex><span>		}
+</span></span><span style=display:flex><span>
+</span></span><span style=display:flex><span>		<span style=color:#78787e>// start watcher
+</span></span></span><span style=display:flex><span><span style=color:#78787e></span>		<span style=color:#ff6ac1>if</span> !rm.watchMode {
+</span></span><span style=display:flex><span>			<span style=color:#ff6ac1>go</span> rs.<span style=color:#57c7ff>Watch</span>()
+</span></span><span style=display:flex><span>		}
+</span></span><span style=display:flex><span>	}
+</span></span><span style=display:flex><span>	<span style=color:#ff6ac1>return</span> <span style=color:#ff6ac1>nil</span>
+</span></span><span style=display:flex><span>}
+</span></span></code></pre></td></tr></table></div></div><p>这个 Start() 方法刚好就是 Device Plugin API 提供的 Start() 方法。启动好全部的 gRPC 服务器之后，就是调用 PeriodicUpdate() 方法。这个方法的作用是 “定期更新”，我们来看看定期更新些什么内容：</p><div class=highlight><div style=color:#e2e4e5;background-color:#282a36;-moz-tab-size:4;-o-tab-size:4;tab-size:4><table style=border-spacing:0;padding:0;margin:0;border:0><tr><td style=vertical-align:top;padding:0;margin:0;border:0><pre tabindex=0 style=color:#e2e4e5;background-color:#282a36;-moz-tab-size:4;-o-tab-size:4;tab-size:4><code><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 1
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 2
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 3
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 4
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 5
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 6
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 7
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 8
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 9
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">10
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">11
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">12
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">13
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">14
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">15
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">16
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">17
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">18
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">19
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">20
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">21
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">22
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">23
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">24
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">25
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">26
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">27
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">28
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">29
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">30
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">31
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">32
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">33
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">34
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">35
+</span></code></pre></td><td style=vertical-align:top;padding:0;margin:0;border:0;width:100%><pre tabindex=0 style=color:#e2e4e5;background-color:#282a36;-moz-tab-size:4;-o-tab-size:4;tab-size:4><code class=language-go data-lang=go><span style=display:flex><span><span style=color:#ff5c57>func</span> (rm <span style=color:#ff6ac1>*</span>resourceManager) <span style=color:#57c7ff>PeriodicUpdate</span>() <span style=color:#ff5c57>func</span>() {
+</span></span><span style=display:flex><span>	stopChan <span style=color:#ff6ac1>:=</span> <span style=color:#ff5c57>make</span>(<span style=color:#ff5c57>chan</span> <span style=color:#ff5c57>interface</span>{})
+</span></span><span style=display:flex><span>	<span style=color:#ff6ac1>if</span> rm.PeriodicUpdateInterval &gt; <span style=color:#ff9f43>0</span> {
+</span></span><span style=display:flex><span>		ticker <span style=color:#ff6ac1>:=</span> time.<span style=color:#57c7ff>NewTicker</span>(rm.PeriodicUpdateInterval)
+</span></span><span style=display:flex><span>
+</span></span><span style=display:flex><span>		<span style=color:#78787e>// Listen for update or stop update channels
+</span></span></span><span style=display:flex><span><span style=color:#78787e></span>		<span style=color:#ff6ac1>go</span> <span style=color:#ff5c57>func</span>() {
+</span></span><span style=display:flex><span>			<span style=color:#ff6ac1>for</span> {
+</span></span><span style=display:flex><span>				<span style=color:#ff6ac1>select</span> {
+</span></span><span style=display:flex><span>				<span style=color:#ff6ac1>case</span> <span style=color:#ff6ac1>&lt;-</span>ticker.C:
+</span></span><span style=display:flex><span>					<span style=color:#ff6ac1>if</span> err <span style=color:#ff6ac1>:=</span> rm.<span style=color:#57c7ff>DiscoverHostDevices</span>(); err <span style=color:#ff6ac1>!=</span> <span style=color:#ff6ac1>nil</span> {
+</span></span><span style=display:flex><span>						log.<span style=color:#57c7ff>Printf</span>(<span style=color:#5af78e>&#34;error: failed to discover host devices: %v&#34;</span>, err)
+</span></span><span style=display:flex><span>						<span style=color:#ff6ac1>continue</span>
+</span></span><span style=display:flex><span>					}
+</span></span><span style=display:flex><span>
+</span></span><span style=display:flex><span>					<span style=color:#ff6ac1>for</span> index, rs <span style=color:#ff6ac1>:=</span> <span style=color:#ff6ac1>range</span> rm.resourceServers {
+</span></span><span style=display:flex><span>						devices <span style=color:#ff6ac1>:=</span> rm.<span style=color:#57c7ff>GetDevices</span>()
+</span></span><span style=display:flex><span>						filteredDevices <span style=color:#ff6ac1>:=</span> rm.<span style=color:#57c7ff>GetFilteredDevices</span>(devices, <span style=color:#ff6ac1>&amp;</span>rm.configList[index].Selectors)
+</span></span><span style=display:flex><span>						rs.<span style=color:#57c7ff>UpdateDevices</span>(filteredDevices)
+</span></span><span style=display:flex><span>					}
+</span></span><span style=display:flex><span>				<span style=color:#ff6ac1>case</span> <span style=color:#ff6ac1>&lt;-</span>stopChan:
+</span></span><span style=display:flex><span>					ticker.<span style=color:#57c7ff>Stop</span>()
+</span></span><span style=display:flex><span>					<span style=color:#ff6ac1>return</span>
+</span></span><span style=display:flex><span>				}
+</span></span><span style=display:flex><span>			}
+</span></span><span style=display:flex><span>		}()
+</span></span><span style=display:flex><span>	}
+</span></span><span style=display:flex><span>	<span style=color:#78787e>// Return stop function
+</span></span></span><span style=display:flex><span><span style=color:#78787e></span>	<span style=color:#ff6ac1>return</span> <span style=color:#ff5c57>func</span>() {
+</span></span><span style=display:flex><span>		<span style=color:#ff6ac1>if</span> rm.PeriodicUpdateInterval &gt; <span style=color:#ff9f43>0</span> {
+</span></span><span style=display:flex><span>			stopChan <span style=color:#ff6ac1>&lt;-</span> <span style=color:#ff6ac1>true</span>
+</span></span><span style=display:flex><span>			<span style=color:#ff5c57>close</span>(stopChan)
+</span></span><span style=display:flex><span>		}
+</span></span><span style=display:flex><span>	}
+</span></span><span style=display:flex><span>}
+</span></span></code></pre></td></tr></table></div></div><p>原来是只要定时器不停止，就一直存在一个 Goroutine 不断的调用 ResourceManager 的 DiscoverHostDevices() 和 GetFilteredDevices() 方法，很明显了，是不断的枚举 PCIe 总线上的设备。
+枚举完成后进行过滤找出符合要求的 PCIe 设备，调用 UpdateDevices() 方法进行更新：</p><div class=highlight><div style=color:#e2e4e5;background-color:#282a36;-moz-tab-size:4;-o-tab-size:4;tab-size:4><table style=border-spacing:0;padding:0;margin:0;border:0><tr><td style=vertical-align:top;padding:0;margin:0;border:0><pre tabindex=0 style=color:#e2e4e5;background-color:#282a36;-moz-tab-size:4;-o-tab-size:4;tab-size:4><code><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 1
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 2
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 3
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 4
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 5
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 6
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 7
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 8
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 9
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">10
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">11
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">12
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">13
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">14
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">15
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">16
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">17
+</span></code></pre></td><td style=vertical-align:top;padding:0;margin:0;border:0;width:100%><pre tabindex=0 style=color:#e2e4e5;background-color:#282a36;-moz-tab-size:4;-o-tab-size:4;tab-size:4><code class=language-go data-lang=go><span style=display:flex><span><span style=color:#ff5c57>func</span> (rs <span style=color:#ff6ac1>*</span>resourceServer) <span style=color:#57c7ff>UpdateDevices</span>(devices []types.PciNetDevice) {
+</span></span><span style=display:flex><span>	<span style=color:#ff6ac1>...</span>
+</span></span><span style=display:flex><span>	<span style=color:#78787e>// Create devices list if not exists
+</span></span></span><span style=display:flex><span><span style=color:#78787e></span>	<span style=color:#ff6ac1>if</span> <span style=color:#ff5c57>len</span>(rs.devs) <span style=color:#ff6ac1>==</span> <span style=color:#ff9f43>0</span> {
+</span></span><span style=display:flex><span>		<span style=color:#ff5c57>var</span> devs []<span style=color:#ff6ac1>*</span>pluginapi.Device
+</span></span><span style=display:flex><span>		<span style=color:#ff6ac1>for</span> n <span style=color:#ff6ac1>:=</span> <span style=color:#ff9f43>0</span>; n &lt; rs.rdmaHcaMax; n<span style=color:#ff6ac1>++</span> {
+</span></span><span style=display:flex><span>			id <span style=color:#ff6ac1>:=</span> n
+</span></span><span style=display:flex><span>			dpDevice <span style=color:#ff6ac1>:=</span> <span style=color:#ff6ac1>&amp;</span>pluginapi.Device{
+</span></span><span style=display:flex><span>				ID:     strconv.<span style=color:#57c7ff>Itoa</span>(id),
+</span></span><span style=display:flex><span>				Health: pluginapi.Healthy,
+</span></span><span style=display:flex><span>			}
+</span></span><span style=display:flex><span>			devs = <span style=color:#ff5c57>append</span>(devs, dpDevice)
+</span></span><span style=display:flex><span>		}
+</span></span><span style=display:flex><span>		rs.devs = devs
+</span></span><span style=display:flex><span>	}
+</span></span><span style=display:flex><span>  <span style=color:#ff6ac1>...</span>
+</span></span><span style=display:flex><span>}
+</span></span></code></pre></td></tr></table></div></div><p>方法的核心在于创建了 pluginapi.Device 的 Slice，这刚好是 <code>api.pb.go</code> 定义的结构体类型。</p><p>这些都准备好以后就会通过 NewSignalNotifier() 方法监听信号：syscall.SIGHUP, syscall.SIGINT, syscall.SIGTERM, syscall.SIGQUIT，剩下的就是优雅退出机制了。我们发现 Device Plugin 的 DaemonSet 都是通过 pluginapi 包实现的，
+执行 <code>grep -Rn "*pluginapi*" pkg/resources/server.go</code> 查看符号位置：</p><div class=highlight><div style=color:#e2e4e5;background-color:#282a36;-moz-tab-size:4;-o-tab-size:4;tab-size:4><table style=border-spacing:0;padding:0;margin:0;border:0><tr><td style=vertical-align:top;padding:0;margin:0;border:0><pre tabindex=0 style=color:#e2e4e5;background-color:#282a36;-moz-tab-size:4;-o-tab-size:4;tab-size:4><code><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 1
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 2
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 3
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 4
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 5
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 6
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 7
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 8
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 9
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">10
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">11
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">12
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">13
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">14
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">15
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">16
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">17
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">18
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">19
+</span><span style="white-space:pre;-webkit-user-select:none;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">20
+</span></code></pre></td><td style=vertical-align:top;padding:0;margin:0;border:0;width:100%><pre tabindex=0 style=color:#e2e4e5;background-color:#282a36;-moz-tab-size:4;-o-tab-size:4;tab-size:4><code class=language-shell data-lang=shell><span style=display:flex><span>39:     health         chan *pluginapi.Device
+</span></span><span style=display:flex><span>44:     devs       <span style=color:#ff6ac1>[]</span>*pluginapi.Device
+</span></span><span style=display:flex><span>45:     deviceSpec <span style=color:#ff6ac1>[]</span>*pluginapi.DeviceSpec
+</span></span><span style=display:flex><span>78:func <span style=color:#ff6ac1>(</span>rsc *resourcesServerPort<span style=color:#ff6ac1>)</span> Register<span style=color:#ff6ac1>(</span>client pluginapi.RegistrationClient, reqt *pluginapi.RegisterRequest<span style=color:#ff6ac1>)</span> error <span style=color:#ff6ac1>{</span>
+</span></span><span style=display:flex><span>111:    var devs <span style=color:#ff6ac1>[]</span>*pluginapi.Device
+</span></span><span style=display:flex><span>153:            health:         make<span style=color:#ff6ac1>(</span>chan *pluginapi.Device<span style=color:#ff6ac1>)</span>,
+</span></span><span style=display:flex><span>283:func <span style=color:#ff6ac1>(</span>rs *resourceServer<span style=color:#ff6ac1>)</span> ListAndWatch<span style=color:#ff6ac1>(</span>e *pluginapi.Empty, s pluginapi.DevicePlugin_ListAndWatchServer<span style=color:#ff6ac1>)</span> error <span style=color:#ff6ac1>{</span>
+</span></span><span style=display:flex><span>313:func <span style=color:#ff6ac1>(</span>rs *resourceServer<span style=color:#ff6ac1>)</span> sendDevices<span style=color:#ff6ac1>(</span>resp *pluginapi.ListAndWatchResponse,
+</span></span><span style=display:flex><span>329:func <span style=color:#ff6ac1>(</span>rs *resourceServer<span style=color:#ff6ac1>)</span> Allocate<span style=color:#ff6ac1>(</span>ctx context.Context, r *pluginapi.AllocateRequest<span style=color:#ff6ac1>)</span> <span style=color:#ff6ac1>(</span>
+</span></span><span style=display:flex><span>330:    *pluginapi.AllocateResponse, error<span style=color:#ff6ac1>)</span> <span style=color:#ff6ac1>{</span>
+</span></span><span style=display:flex><span>335:    ress :<span style=color:#ff6ac1>=</span> make<span style=color:#ff6ac1>([]</span>*pluginapi.ContainerAllocateResponse, len<span style=color:#ff6ac1>(</span>r.GetContainerRequests<span style=color:#ff6ac1>()))</span>
+</span></span><span style=display:flex><span>352:func <span style=color:#ff6ac1>(</span>rs *resourceServer<span style=color:#ff6ac1>)</span> GetDevicePluginOptions<span style=color:#ff6ac1>(</span>context.Context, *pluginapi.Empty<span style=color:#ff6ac1>)</span> <span style=color:#ff6ac1>(</span>
+</span></span><span style=display:flex><span>353:    *pluginapi.DevicePluginOptions, error<span style=color:#ff6ac1>)</span> <span style=color:#ff6ac1>{</span>
+</span></span><span style=display:flex><span>360:func <span style=color:#ff6ac1>(</span>rs *resourceServer<span style=color:#ff6ac1>)</span> PreStartContainer<span style=color:#ff6ac1>(</span>context.Context, *pluginapi.PreStartContainerRequest<span style=color:#ff6ac1>)</span> <span style=color:#ff6ac1>(</span>
+</span></span><span style=display:flex><span>361:    *pluginapi.PreStartContainerResponse, error<span style=color:#ff6ac1>)</span> <span style=color:#ff6ac1>{</span>
+</span></span><span style=display:flex><span>423:            rs.devs <span style=color:#ff6ac1>=</span> <span style=color:#ff6ac1>[]</span>*pluginapi.Device<span style=color:#ff6ac1>{}</span>
+</span></span><span style=display:flex><span>431:            var devs <span style=color:#ff6ac1>[]</span>*pluginapi.Device
+</span></span><span style=display:flex><span>447:func devicesChanged<span style=color:#ff6ac1>(</span>deviceList, newDeviceList <span style=color:#ff6ac1>[]</span>*pluginapi.DeviceSpec<span style=color:#ff6ac1>)</span> bool <span style=color:#ff6ac1>{</span>
+</span></span><span style=display:flex><span>467:func getDevicesSpec<span style=color:#ff6ac1>(</span>devices <span style=color:#ff6ac1>[]</span>types.PciNetDevice<span style=color:#ff6ac1>)</span> <span style=color:#ff6ac1>[]</span>*pluginapi.DeviceSpec <span style=color:#ff6ac1>{</span>
+</span></span><span style=display:flex><span>468:    devicesSpec :<span style=color:#ff6ac1>=</span> make<span style=color:#ff6ac1>([]</span>*pluginapi.DeviceSpec, 0<span style=color:#ff6ac1>)</span>
+</span></span></code></pre></td></tr></table></div></div><p>这就眼熟了，resourceServer 把 Plugin Device Protobuf 中定义的函数都实现了一遍。</p><p>至此，Kubernetes Device Plugin 和 Deivce Plugin 方案都看了一遍，其实 Device Plugin 最大的缺陷在于只能在 Node 视角去做调度而非集群视角。
+笔者在使用 Device Plugin 的时候直接 fork 了 Kubernetes 仓库，对 ManagerImpl 的 Kubelet 源码进行了大量的修改，并且重新开发了 Device Plugin 来支持集群视角的调度。</p><p>无论那种调度方案，都避免不了资源碎片，只能看 Pod 中的任务是否可以细分，否则有的 GPU 或者 FPGA 设备确实会在短时间内空闲，其实本质和编程语言的垃圾回收一样的道理。</p></div></div><footer id=footer><div class=footer-inner><div><div style=font-weight:700;margin-bottom:15px>发布地址</div><div><a href=https://halo.wecomz.com>Halo的主页</a></div><div><a href=https://bluemiaomiao.gitee.io>中国境内镜像</a></div><div><a href=https://bluemiaomiao.github.io>中国境外镜像</a></div></div><div><div style=font-weight:700;margin-bottom:15px>友情链接</div><div><a href=https://debuginn.cn>DebugInn</a></div><div><a href=https://blog.csdn.net/qq_43442524>普通Gopher</a></div></div><div><div style=font-weight:700;margin-bottom:15px>开源软件</div><div><a href=https://bluemiaomiao.github.io/libsshd/>OpenSSH Configuration Library</a></div><div><a href=https://bluemiaomiao.github.io/fastdfs-spring-boot-starter/>FastDFS SpringBoot Starter</a></div><div><a href=https://bluemiaomiao.github.io/librocm-smi-gobinding/>AMD ROCm SMI for Golang</a></div><div><a href=https://bluemiaomiao.github.io/libnvml-smi-gobinding>NVIDIA NVML SMI for Golang</a></div><div><a href=https://www.wecomz.com/software/zgraphics>zGraphics(Prometheus GPU Exporter)</a></div><div><a href=https://www.wecomz.com/software/ztrader>zTrader Framework</a></div></div><div><div style=font-weight:700;margin-bottom:15px>其他</div><div><a href=https://values.wecomz.com>WecomZ 价值观</a></div></div></div><div class=icp><div style=min-height:13px;min-width:13px;background-image:url(/image/beian.png);background-repeat:no-repeat;background-size:contain;margin-right:5px></div><div><a href=https://beian.miit.gov.cn target=_blank>鲁ICP备2023019133号</a></div></div></footer></body><script src=../../js/halo.js type=text/javascript></script></html>
