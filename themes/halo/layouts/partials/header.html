@@ -1,0 +1,18 @@
+<div id="header">
+    <div style="width: 100%; display: flex; align-items: center; height: 100%;">
+        <div class="disable-select" style="display: flex; justify-content: flex-end; font-size: 14pt; font-weight: bold; color: #555;">
+            <div style="margin-right: 35px;"></div>
+            <div>
+                <a style="color: #555; text-decoration: none;" href="/">&lt;{{ .Site.Title }}/&gt;</a>
+            </div>
+        </div>
+        <div style="flex: 1; display: flex; justify-content: flex-end; font-size: 14pt; font-weight: bold; color: #555;">
+            {{ range .Site.Menus.header.ByWeight }}
+            <div style="margin-right: 45px;">
+                <a href="{{.PageRef}}" style="color: #555; text-decoration: none;">{{.Name}}</a >
+            </div>
+            {{ end }}
+            <div style="margin-left: 35px;"></div>
+        </div>
+    </div>
+</div>

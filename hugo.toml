@@ -1,0 +1,23 @@
+languageCode = 'zh'
+title = 'Halo的主页'
+theme = 'halo'
+relativeurls = true
+
+[params]
+subtitle = '大道至简，顺势而为'
+
+[menu]
+[[menu.header]]
+name = '文章'
+pageRef = '/article'
+weight = 1
+[[menu.header]]
+name = '关于'
+pageRef = '/about'
+weight = 2
+
+[markup]
+  [markup.highlight]
+  style = 'base16-snazzy'
+  linenos = true
+  linenostart = 1
